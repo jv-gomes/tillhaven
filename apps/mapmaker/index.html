@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Tillhaven — Map Maker</title>
+    <link rel="stylesheet" href="/src/styles/editor.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <span class="brand">Tillhaven <b>Map Maker</b></span>
+
+      <div class="group" role="radiogroup" aria-label="Tool">
+        <button class="tool" data-tool="paint" title="Paint (B)">Paint</button>
+        <button class="tool" data-tool="terrain" title="Terrain brush (T)">Terrain</button>
+        <button class="tool" data-tool="rect" title="Rectangle fill (R)">Rect</button>
+        <button class="tool" data-tool="fill" title="Flood fill (G)">Fill</button>
+        <button class="tool" data-tool="pick" title="Pick up a stamp from the map (I)">Pick</button>
+        <button class="tool" data-tool="erase" title="Erase (E)">Erase</button>
+        <button class="tool" data-tool="object" title="Place objects (O)">Object</button>
+        <button class="tool" data-tool="plot" title="Mark farm plots (P)">Plot</button>
+      </div>
+
+      <div class="group">
+        <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+        <button id="redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      </div>
+
+      <div class="group">
+        <label class="check"><input type="checkbox" id="grid" checked /> Grid</label>
+        <label class="check"><input type="checkbox" id="dim" /> Dim other layers</label>
+        <button id="fit" title="Fit map to view (F)">Fit</button>
+      </div>
+
+      <div class="group right">
+        <label class="field">Map <input type="text" id="map-name" value="farm" size="8" /></label>
+        <button id="save" class="primary" title="Write into apps/client/public/tilemaps (Ctrl+S)">
+          Save to project
+        </button>
+        <button id="download">Download</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel left">
+        <section class="block">
+          <h2>Tileset</h2>
+          <select id="palette-select"></select>
+          <p class="hint" id="palette-hint"></p>
+          <div class="palette-scroll"><canvas id="palette"></canvas></div>
+        </section>
+
+        <section class="block" id="terrain-block">
+          <h2>Terrain brush</h2>
+          <select id="terrain-select"></select>
+          <p class="hint">
+            Paint a region and edges resolve automatically. Paint at least 2 tiles wide —
+            the tileset has no single-width art.
+          </p>
+          <div id="terrain-preview"></div>
+          <details>
+            <summary>Calibrate roles</summary>
+            <p class="hint">
+              Click a role, then click the tile in the 4&times;4 block that should fill it.
+              Defaults were verified against the shipped art; you only need this for a
+              different tileset.
+            </p>
+            <div id="terrain-calibrate"></div>
+            <button id="save-terrain">Save terrain-sets.json</button>
+          </details>
+        </section>
+      </aside>
+
+      <div class="canvas-wrap">
+        <canvas id="map"></canvas>
+      </div>
+
+      <aside class="panel right">
+        <section class="block">
+          <h2>Layers</h2>
+          <ul id="layers" class="layers"></ul>
+          <div class="row">
+            <button id="add-layer">+ Tile layer</button>
+            <button id="remove-layer">Remove</button>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Map size</h2>
+          <div class="row">
+            <label class="field">W <input type="number" id="map-w" min="1" max="200" /></label>
+            <label class="field">H <input type="number" id="map-h" min="1" max="200" /></label>
+            <button id="resize">Apply</button>
+          </div>
+          <p class="hint">
+            The server's farm is 20&times;16 (<code>FARM_WIDTH</code>/<code>FARM_HEIGHT</code>).
+            Changing this here does not change the server.
+          </p>
+        </section>
+
+        <section class="block">
+          <h2>Plots <span id="plot-count" class="badge">0</span></h2>
+          <p class="hint">
+            Order is the unlock order — plot <i>n</i> costs <code>250&nbsp;&times;&nbsp;n²</code>.
+            Drag to reorder.
+          </p>
+          <ol id="plot-list" class="plots"></ol>
+          <button id="clear-plots">Clear all</button>
+        </section>
+
+        <section class="block">
+          <h2>Selected object</h2>
+          <div id="object-info" class="hint">Nothing selected.</div>
+          <button id="delete-object">Delete (Del)</button>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="status">Loading assets…</span>
+      <span id="coords" class="coords"></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

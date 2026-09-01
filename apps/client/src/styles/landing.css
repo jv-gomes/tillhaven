@@ -1,0 +1,468 @@
+/*
+ * Landing page.
+ *
+ * The page is laid out like a seed catalogue: a stated thesis, a working
+ * demonstration of it, then the catalogue entries. The one loud element is the
+ * hero plot panel, where real crops grow on a real clock. Everything else stays
+ * quiet so that panel carries the page.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Hero
+ * ------------------------------------------------------------------ */
+
+/*
+ * Deliberately plain. An earlier version had a soil band behind the fold, but
+ * its top edge cut straight through the headline at most viewport heights, and
+ * the plot panel is already carrying this section. One loud element, not two.
+ */
+.hero {
+  padding-block: clamp(3rem, 8vw, 6rem) clamp(3rem, 8vw, 5rem);
+}
+
+.hero__grid {
+  display: grid;
+  gap: clamp(2.5rem, 6vw, 4.5rem);
+  align-items: start;
+}
+
+@media (min-width: 940px) {
+  .hero__grid {
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    align-items: center;
+  }
+}
+
+.hero__title {
+  margin-top: 1.25rem;
+  font-size: clamp(2.6rem, 7vw, 4.4rem);
+}
+
+/* The phrase the whole pitch turns on, struck through with a band of soil. */
+.hero__title em {
+  font-style: normal;
+  /* A background gradient rather than a positioned pseudo-element: no stacking
+     context to fight with, and it wraps correctly across lines. */
+  background-image: linear-gradient(var(--soil), var(--soil));
+  background-repeat: no-repeat;
+  background-position: 0 88%;
+  background-size: 100% 0.26em;
+  padding-inline: 0.05em;
+}
+
+.hero__lede {
+  margin-top: 1.5rem;
+  max-width: 44ch;
+  font-size: 1.1rem;
+  color: var(--ink-soft);
+}
+
+.hero__actions {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.hero__meta {
+  margin-top: 1.75rem;
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------------ *
+ * The plot — signature element
+ *
+ * Six live plots. Growth is derived from elapsed wall-clock time on every
+ * frame, never accumulated, which is exactly how the real farm works
+ * (CLAUDE.md §4.2). Leave the tab and the crops keep going.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Colours inside the soil band are pinned, not tokenised. This panel is a
+ * picture of the game world, and the game world does not have a night mode —
+ * inverting it would put cream text on orange earth.
+ */
+.plot__soil {
+  --world-ink: #2a1018;
+  --world-paper: #fbf1e2;
+
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  background: var(--soil);
+  border-bottom: var(--rule) solid var(--line);
+}
+
+.plot__cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  padding: 0.5rem 0 0;
+  min-height: 152px;
+  border-right: 2px solid rgba(42, 16, 24, 0.22);
+}
+
+.plot__cell:last-child {
+  border-right: 0;
+}
+
+/* A ripe plot lifts out of the soil band so "ready" is legible at a glance. */
+.plot__cell.is-ripe {
+  background: var(--grass);
+}
+
+.plot__crop {
+  transition: transform 140ms steps(2);
+}
+
+.plot__cell.is-ripe .plot__crop {
+  transform: translateY(-3px);
+}
+
+.plot__bar {
+  width: 100%;
+  height: 10px;
+  margin-top: 0.5rem;
+  border-top: 2px solid rgba(42, 16, 24, 0.28);
+  background: rgba(42, 16, 24, 0.16);
+}
+
+.plot__fill {
+  height: 100%;
+  background: var(--world-ink);
+  /* Width is set from JS each frame; no CSS transition, or the bar would lag
+     behind the derived value and lie about progress. */
+}
+
+.plot__cell.is-ripe .plot__fill {
+  background: var(--grass-deep);
+}
+
+.plot__label {
+  width: 100%;
+  padding: 0.4rem 0.25rem 0.5rem;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--world-ink);
+  background: color-mix(in srgb, var(--world-paper) 70%, transparent);
+}
+
+.plot__timer {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.plot__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  padding: 0.85rem 1rem;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.plot__speed {
+  margin-left: auto;
+  color: var(--ink-faint);
+}
+
+/*
+ * The away notice. Appears when you return to the tab, reporting exactly what
+ * happened while you were gone — the product's whole promise, stated as fact.
+ */
+.plot__away {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 1rem;
+  background: var(--grass-deep);
+  color: #fbf1e2;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: var(--rule) solid var(--line);
+}
+
+.plot__away[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Sections
+ * ------------------------------------------------------------------ */
+
+.section {
+  padding-block: clamp(3.5rem, 9vw, 6rem);
+}
+
+.section--sunk {
+  background: var(--paper-sunk);
+  border-block: var(--rule) solid var(--line);
+}
+
+.section__title {
+  margin-top: 1rem;
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  max-width: 20ch;
+}
+
+.section__lede {
+  margin-top: 1rem;
+  max-width: var(--measure);
+  color: var(--ink-soft);
+}
+
+/* ------------------------------------------------------------------ *
+ * Growth timeline
+ * ------------------------------------------------------------------ */
+
+.stages {
+  margin-top: 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.stage {
+  flex: 1 1 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 0.4rem 0.7rem;
+  border: var(--rule) solid var(--line);
+  background: var(--paper-raised);
+}
+
+.stage:last-child {
+  background: var(--grass);
+}
+
+/* Crop frames are 16x32 with the art in the bottom half, so a scale-3 sprite is
+   96px tall with 48px of headroom. That headroom is the space a tall plant
+   grows into — reserve it rather than clipping it. */
+.stage__art {
+  display: flex;
+  align-items: flex-end;
+  min-height: 96px;
+}
+
+.stage__n {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.stage:last-child .stage__n {
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ *
+ * Catalogue — crops and animals
+ * ------------------------------------------------------------------ */
+
+.catalogue {
+  margin-top: 2.5rem;
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  border: var(--rule) solid var(--line);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-hard-sm);
+}
+
+.entry__art {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 116px;
+  padding: 1rem;
+  background: var(--paper-sunk);
+  border-bottom: var(--rule) solid var(--line);
+}
+
+.section--sunk .entry__art {
+  background: var(--paper);
+}
+
+.entry__body {
+  padding: 1rem;
+}
+
+.entry__name {
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* A ledger, not a bullet list: these are real numbers from the shared config. */
+.spec {
+  margin: 0.85rem 0 0;
+  display: grid;
+  gap: 0.3rem;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.spec div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.spec dt {
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.spec dd {
+  margin: 0;
+  margin-left: auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ *
+ * Two-column prose blocks (trading, VIP)
+ * ------------------------------------------------------------------ */
+
+.split {
+  display: grid;
+  gap: clamp(2rem, 5vw, 3.5rem);
+  align-items: start;
+}
+
+@media (min-width: 860px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.rules li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+/* A tilled-soil square instead of a bullet. */
+.rules li::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  margin-top: 0.45em;
+  background: var(--soil);
+  border: 2px solid var(--line);
+}
+
+.rules strong {
+  font-weight: 700;
+}
+
+.note {
+  margin-top: 1.75rem;
+  padding: 1rem 1.15rem;
+  border-left: 6px solid var(--barn);
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.section--sunk .note {
+  background: var(--paper);
+}
+
+/* ------------------------------------------------------------------ *
+ * Closing call to action
+ * ------------------------------------------------------------------ */
+
+.closer {
+  padding-block: clamp(3.5rem, 9vw, 5.5rem);
+  text-align: center;
+}
+
+/* The house window is 80x96 source pixels, so at scale 2 this needs 192px. */
+.closer__scene {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 192px;
+  margin-bottom: 2rem;
+  overflow: hidden;
+}
+
+.closer__title {
+  font-size: clamp(1.9rem, 5vw, 3rem);
+  margin-inline: auto;
+  max-width: 16ch;
+}
+
+.closer__actions {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: center;
+}
+
+/* ------------------------------------------------------------------ *
+ * Narrow screens
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 620px) {
+  /* Six plots do not fit; the demo reads fine with three. */
+  .plot__soil {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .plot__cell:nth-child(n + 4) {
+    display: none;
+  }
+
+  .plot__cell:nth-child(3) {
+    border-right: 0;
+  }
+
+  .stages {
+    gap: 0.5rem;
+  }
+
+  .stage {
+    flex-basis: 70px;
+    padding-inline: 0.2rem;
+  }
+}

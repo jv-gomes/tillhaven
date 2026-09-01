@@ -1,0 +1,371 @@
+/*
+ * Tillhaven — shared foundation.
+ *
+ * Direction: a spring seed catalogue. Warm pulp paper, deep ink, soil-orange
+ * accent, hard offset shadows that read as letterpress and as pixel-art UI
+ * chrome at the same time. Every illustration on the page is a real frame from
+ * the game's spritesheets — nothing is drawn twice.
+ *
+ * Every colour below is sampled from the actual art in /assets, so the page and
+ * the game cannot drift apart visually.
+ */
+
+:root {
+  /* Ground */
+  --paper: #f2e3ce;
+  --paper-sunk: #e6d2b5;
+  --paper-raised: #fbf1e2;
+
+  /* Ink */
+  --ink: #2a1018;
+  --ink-soft: #6d4738;
+  --ink-faint: #9a7a63;
+
+  /* Sampled from the spritesheets */
+  --soil: #ee9d51;
+  --soil-deep: #c9762f;
+  --grass: #79bf56;
+  --grass-deep: #347349;
+  --barn: #8a3625;
+  --barn-bright: #ae4924;
+  --night: #052a3a;
+
+  --rule: 3px;
+  /* Borders are their own token, not --ink. On paper they are the same thing;
+     in the dark theme --ink becomes cream, and 3px cream rules across a page
+     read as underlines rather than structure. */
+  --line: var(--ink);
+  --shadow-hard: 5px 5px 0 var(--ink);
+  --shadow-hard-sm: 3px 3px 0 var(--ink);
+
+  --font-display: ui-monospace, 'SFMono-Regular', 'SF Mono', 'Cascadia Mono',
+    'Roboto Mono', Menlo, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+
+  --measure: 62ch;
+  --gutter: clamp(1.25rem, 4vw, 3rem);
+  --page-max: 1180px;
+}
+
+/*
+ * Night reading. The game's own art carries a deep blue (#052A3A), so the dark
+ * treatment stays inside the same world rather than inverting to grey.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0b1f2a;
+    --paper-sunk: #071822;
+    --paper-raised: #123040;
+    --ink: #f2e3ce;
+    --ink-soft: #b59d84;
+    --ink-faint: #7d6a58;
+    --line: #2f5567;
+    --shadow-hard: 5px 5px 0 #02131b;
+    --shadow-hard-sm: 3px 3px 0 #02131b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Every raster image on this site is pixel art. No exceptions, no smoothing. */
+img,
+.sprite,
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.sprite {
+  display: inline-block;
+  background-repeat: no-repeat;
+  flex: none;
+}
+
+a {
+  color: inherit;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+/* ------------------------------------------------------------------ *
+ * Type roles
+ * ------------------------------------------------------------------ */
+
+/* The ledger voice: labels, timers, quantities, anything countable. */
+.mono {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.eyebrow::after {
+  content: '';
+  flex: 1;
+  height: var(--rule);
+  background: currentColor;
+  opacity: 0.25;
+}
+
+/* ------------------------------------------------------------------ *
+ * Layout
+ * ------------------------------------------------------------------ */
+
+.wrap {
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+/* ------------------------------------------------------------------ *
+ * Buttons
+ * ------------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.5rem;
+  border: var(--rule) solid var(--line);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--shadow-hard-sm);
+  transition: transform 90ms ease, box-shadow 90ms ease, background-color 90ms ease;
+}
+
+.btn:hover {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
+.btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+.btn--primary {
+  background: var(--soil);
+  color: var(--ink);
+}
+
+.btn--primary:hover {
+  background: var(--soil-deep);
+}
+
+.btn--ghost {
+  background: transparent;
+  box-shadow: none;
+}
+
+.btn--ghost:hover {
+  background: var(--paper-sunk);
+  transform: none;
+  box-shadow: none;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * Panels — the recurring container. Hard border, hard offset shadow.
+ * ------------------------------------------------------------------ */
+
+.panel {
+  border: var(--rule) solid var(--line);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-hard);
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: var(--rule) solid var(--line);
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ *
+ * Site chrome
+ * ------------------------------------------------------------------ */
+
+.masthead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: var(--rule) solid var(--line);
+  background: var(--paper);
+}
+
+.masthead__inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 60px;
+  padding-block: 0.6rem;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.masthead__nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Uppercase tracked labels wrap one word per line if given the chance, which
+   turns the header into three stacked rows on a phone. */
+.masthead__nav .btn {
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .masthead__nav .btn {
+    padding-inline: 0.9rem;
+    font-size: 0.7rem;
+  }
+
+  /* On the landing page both calls to action sit in the hero a few hundred
+     pixels below, so the header only needs the primary one. Not on the auth
+     pages — there the ghost link is the only route to the other form in the
+     header, and dropping it would strand someone mid-signup. */
+  body:not(.auth) .masthead__nav .btn--ghost {
+    display: none;
+  }
+}
+
+.sitefoot {
+  border-top: var(--rule) solid var(--line);
+  padding-block: 2.5rem 3rem;
+  color: var(--ink-soft);
+}
+
+.sitefoot__inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: baseline;
+}
+
+.sitefoot__links {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
+.sitefoot a {
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Accessibility
+ * ------------------------------------------------------------------ */
+
+:focus-visible {
+  outline: var(--rule) solid var(--soil-deep);
+  outline-offset: 3px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  /* Freeze sprite strips on their first frame rather than removing them. */
+  .sprite {
+    animation: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

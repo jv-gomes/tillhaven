@@ -1,0 +1,47 @@
+[
+  {
+    "id": "water",
+    "name": "Water (flat)",
+    "tilesetKey": "water-tile",
+    "block": 0,
+    "roles": {
+      "c": 0
+    }
+  },
+  {
+    "id": "ground-grass",
+    "name": "Grass (flat fill)",
+    "tilesetKey": "ground-grass",
+    "block": 0,
+    "roles": {
+      "c": 0
+    }
+  },
+  {
+    "id": "ground-soil-dry",
+    "name": "Tilled soil, dry (flat fill)",
+    "tilesetKey": "ground-soil-dry",
+    "block": 0,
+    "roles": {
+      "c": 0
+    }
+  },
+  {
+    "id": "ground-soil-wet",
+    "name": "Tilled soil, wet (flat fill)",
+    "tilesetKey": "ground-soil-wet",
+    "block": 0,
+    "roles": {
+      "c": 0
+    }
+  },
+  {
+    "id": "ground-path",
+    "name": "Path (flat fill)",
+    "tilesetKey": "ground-path",
+    "block": 0,
+    "roles": {
+      "c": 0
+    }
+  }
+]

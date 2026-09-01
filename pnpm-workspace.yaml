@@ -1,0 +1,10 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Both need postinstall scripts to be usable at all:
+#   esbuild  downloads its platform binary; Vite and tsx will not run without it
+#   argon2   compiles/fetches a native binding; it is the password hasher (CLAUDE.md §8)
+allowBuilds:
+  argon2: true
+  esbuild: true

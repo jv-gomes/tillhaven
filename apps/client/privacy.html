@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — Tillhaven</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#f2e3ce" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+  </head>
+  <body class="auth">
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="wordmark" href="/">
+          <span data-sprite="wordmark"></span>
+          Tillhaven
+        </a>
+        <nav class="masthead__nav">
+          <a class="btn btn--primary" href="/register">Start your farm</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="legal">
+      <div class="wrap legal__body">
+        <p class="eyebrow">Privacy Policy</p>
+        <h1 class="legal__title">Privacy Policy</h1>
+
+        <p class="legal__stamp">
+          <strong>Draft — not legally reviewed, not in force.</strong>
+          This describes what the code currently does, which is a useful
+          starting point but is not a compliant privacy policy. It has not been
+          checked against GDPR, CCPA, or anything else. Replace it before the
+          game accepts a single real account.
+          Tracked as <code>T-0.10</code> in <code>ROADMAP.md</code>.
+        </p>
+
+        <h2>What we collect</h2>
+        <p>
+          A username, an email address, and a password — stored only as an
+          argon2 hash, never in plain text. Your game state: farm, plots,
+          animals, inventory, gold, and trade history. Security events such as
+          failed sign-ins, including the originating IP address.
+        </p>
+
+        <h2>What we do not collect</h2>
+        <p>
+          No third-party analytics, no advertising identifiers, and no tracking
+          across other sites. The pages load no external scripts, fonts, or
+          images — everything is served from this origin.
+        </p>
+
+        <h2>Payments</h2>
+        <p>
+          VIP purchases go through Stripe. Card details are entered on Stripe's
+          own checkout and never touch our servers. We store the Stripe session
+          and payment identifiers, the amount, the currency, and the status, so
+          that purchases can be reconciled and supported.
+        </p>
+
+        <h2>Cookies</h2>
+        <p>
+          One cookie, <code>th_session</code>, which keeps you signed in. It is
+          httpOnly and cannot be read by scripts. There are no advertising or
+          analytics cookies, which is why this site has no cookie banner.
+        </p>
+
+        <h2>Trade history</h2>
+        <p>
+          Completed trades are written to a permanent, unmodifiable log
+          recording both players, the items, and the time. This is what makes it
+          possible to investigate a scam report. Because it is an audit record,
+          it is retained even if an account is closed.
+        </p>
+
+        <h2>Still to write</h2>
+        <p>
+          Legal basis for processing, retention periods, data export and
+          deletion requests, sub-processors, international transfers, and a
+          contact address for privacy enquiries. All of it needs professional
+          review.
+        </p>
+
+        <p class="legal__back"><a href="/">Back to the farm gate</a></p>
+      </div>
+    </main>
+
+    <footer class="sitefoot">
+      <div class="wrap sitefoot__inner">
+        <p class="mono">Tillhaven · Spring build</p>
+        <nav class="sitefoot__links mono">
+          <a href="/">Home</a>
+          <a href="/terms">Terms</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/pages/legal.ts"></script>
+  </body>
+</html>

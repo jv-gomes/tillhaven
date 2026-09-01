@@ -1,0 +1,32 @@
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+# Generated: produced by `pnpm assets` from the sources in /new_assets
+apps/client/public/assets/
+
+# Licensed asset pack (EmanuelleDev) — redistribution forbidden, so it must
+# never be committed. See ATTRIBUTION.md. A fresh clone needs the pack copied
+# in manually before `pnpm assets` can run.
+new_assets/
+
+.DS_Store
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Per-machine Claude Code permissions — local paths and personal allowlist.
+# The project's own agent and skills under .claude/ ARE tracked.
+.claude/settings.local.json
+
+coverage/

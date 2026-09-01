@@ -1,0 +1,1700 @@
+/*
+ * In-game HUD. DOM over the canvas, same paper-and-ink language as the rest of
+ * the site so signing in does not feel like entering a different product.
+ *
+ * The game world is always daylight, so these are pinned colours rather than
+ * theme tokens.
+ */
+
+.hud {
+  --ink: #2a1018;
+  --paper: #f2e3ce;
+  --paper-raised: #fbf1e2;
+  --soil: #ee9d51;
+  --grass-deep: #347349;
+  --barn: #ae4924;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  position: fixed;
+  inset: 0;
+  /* The canvas underneath must stay clickable; only the panels catch events. */
+  pointer-events: none;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--ink);
+}
+
+.hud > * {
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------------ *
+ * Top bar
+ * ------------------------------------------------------------------ */
+
+.hud__bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  background: var(--paper);
+  border-bottom: 3px solid var(--ink);
+}
+
+.hud__brand {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.hud__name {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: #6d4738;
+}
+
+.hud__gold {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.7rem;
+  background: var(--soil);
+  border: 3px solid var(--ink);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The pack's own coin, turning (T-11.05). `ui-money.png` is a six-frame strip,
+ * so the animation steps the background across it rather than interpolating —
+ * anything smoother would be sub-pixel movement on 16px art.
+ */
+.hud__coin {
+  flex: none;
+  width: var(--coin-size, 32px);
+  height: var(--coin-size, 32px);
+  background-image: var(--coin-sheet);
+  background-size: var(--coin-strip) var(--coin-size);
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  animation: hud-coin-spin var(--coin-spin, 0.75s) steps(var(--coin-frames, 6)) infinite;
+}
+
+@keyframes hud-coin-spin {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: calc(-1 * var(--coin-strip)) 0;
+  }
+}
+
+/* A spinning coin is decoration, and decoration should stop when asked to. */
+@media (prefers-reduced-motion: reduce) {
+  .hud__coin {
+    animation: none;
+  }
+}
+
+.hud__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.8rem;
+  border: 3px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/** One cell of `ui-hud.png`, addressed by its measured top-left (`UI_ICON`). */
+.hud__icon {
+  flex: none;
+  width: var(--icon-size, 32px);
+  height: var(--icon-size, 32px);
+  background-image: var(--icon-sheet);
+  background-size: var(--icon-sheet-size);
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+
+.hud__icon--bag {
+  background-position: var(--icon-bag);
+}
+
+.hud__btn:hover {
+  background: var(--soil);
+}
+
+/* ------------------------------------------------------------------ *
+ * Side panels
+ * ------------------------------------------------------------------ */
+
+.hud__label {
+  margin: 0 0 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6d4738;
+}
+
+/* ------------------------------------------------------------------ *
+ * Toasts
+ * ------------------------------------------------------------------ */
+
+.hud__toasts {
+  position: absolute;
+  left: 50%;
+  /* Clear of the hotbar, which owns the bottom centre (T-8.07). */
+  bottom: 6rem;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 0.5rem;
+  justify-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  margin: 0;
+  padding: 0.6rem 1rem;
+  border: 3px solid var(--ink);
+  background: var(--paper-raised);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+
+.toast--error {
+  background: var(--barn);
+  color: #fbf1e2;
+}
+
+.toast.is-leaving {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Narrow screens: the side panels become bottom strips.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 700px) {
+  .hud__toasts {
+    bottom: 36vh;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Shop
+ *
+ * A panel rather than a modal: the farm stays visible behind it, so you can
+ * see what you are buying seed for.
+ * ------------------------------------------------------------------ */
+
+.shop {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(520px, calc(100vw - 2rem));
+  max-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
+}
+
+.shop[hidden] {
+  display: none;
+}
+
+.shop__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 3px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.shop__title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.shop__tabs {
+  margin-left: auto;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.shop__tab {
+  padding: 0.3rem 0.75rem;
+  border: 2px solid var(--paper);
+  border-radius: 0;
+  background: transparent;
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.shop__tab.is-active {
+  background: var(--soil);
+  border-color: var(--soil);
+  color: var(--ink);
+}
+
+.shop__close {
+  border: 0;
+  background: transparent;
+  color: var(--paper);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.shop__list {
+  overflow-y: auto;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.shop__empty {
+  margin: 0;
+  padding: 1rem;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: #6d4738;
+}
+
+.shoprow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--paper-raised);
+  border: 2px solid transparent;
+}
+
+.shoprow:hover {
+  border-color: var(--ink);
+}
+
+/* Nothing affordable, or nothing held. Visibly out of reach, rather than a
+   button that fails when pressed. */
+.shoprow.is-disabled {
+  opacity: 0.45;
+}
+
+.shoprow__icon {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  flex: none;
+}
+
+.shoprow__text {
+  display: grid;
+  min-width: 0;
+}
+
+.shoprow__name {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shoprow__meta {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: #6d4738;
+  font-variant-numeric: tabular-nums;
+}
+
+.shoprow__qty {
+  margin-left: auto;
+  width: 64px;
+  padding: 0.3rem 0.4rem;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.shoprow__btn {
+  padding: 0.35rem 0.8rem;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--soil);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  flex: none;
+}
+
+.shoprow__btn:hover:not(:disabled) {
+  background: #c9762f;
+}
+
+.shoprow__btn:disabled,
+.shoprow__qty:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@media (max-width: 700px) {
+  .shop {
+    top: 60px;
+    max-height: 55vh;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Inventory: chest on top, backpack underneath (T-10.04a)
+ *
+ * One panel, because moving things between the two containers is the point of
+ * having both on screen. Every slot the player owns is drawn, empty ones
+ * included — the empties are what you drag into, and seeing them is how you
+ * know an upgrade did anything.
+ *
+ * The cells are the PACK'S OWN slot art (`ui-inventory-slots.png`, the same
+ * 18px squares the hotbar uses, measured in T-8.07) rather than a CSS box, so
+ * the panel and the strip along the bottom of the screen are visibly the same
+ * game. `Book.png` is deliberately NOT the panel's background: it is a
+ * fixed-size landscape open book, and a two-page spread cannot back a
+ * vertically stacked pair of grids without stretching pixel art. Its palette
+ * is here instead — the paper, cover and gilt below are sampled from it.
+ * ------------------------------------------------------------------ */
+
+.pack {
+  /* Sampled from ui-inventory-book.png: page, cover, spine, gilt. */
+  --page: #f7dbc6;
+  --cover: #4a2123;
+  --gilt: #ae4924;
+
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  border: 3px solid var(--cover);
+  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
+  overflow-y: auto;
+}
+
+.pack[hidden] {
+  display: none;
+}
+
+/*
+ * NOT `position: sticky`. It was, and over the WebGL canvas Chromium promoted
+ * it to its own layer and painted a black band across the compositing bounds —
+ * a 700x32 rectangle above the hotbar, in the game, not just in screenshots.
+ * The panel is short enough not to need a pinned header anyway: twelve columns
+ * wide, and a deep chest scrolls its own section.
+ */
+.pack__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--cover);
+  color: var(--page);
+}
+
+.pack__title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.pack__close {
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pack__section {
+  padding: 0.75rem;
+}
+
+.pack__section[hidden] {
+  display: none;
+}
+
+/* A rule between the two, so the chest and the backpack read as two places
+   rather than one long grid. */
+.pack__section + .pack__section {
+  border-top: 3px solid var(--cover);
+}
+
+.pack__label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6d4738;
+}
+
+.pack__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.pack__upgrade {
+  margin-left: auto;
+  padding: 0.25rem 0.5rem;
+  border: 2px solid var(--cover);
+  background: var(--gilt);
+  color: var(--page);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.pack__upgrade:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pack__upgrade[hidden] {
+  display: none;
+}
+
+/*
+ * Twelve columns, always: the backpack's first row is then exactly the hotbar
+ * (`--pack-columns` is `HOTBAR_SLOTS`, set from the shared config), so the row
+ * marked below is the strip at the bottom of the screen rather than a lookalike.
+ * The chest uses the same grid so a slot is the same size in both.
+ */
+.pack__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--pack-columns, 12), var(--slot-size, 54px));
+  gap: 2px;
+}
+
+.pack__hint {
+  margin: 0;
+  padding: 0 0.75rem 0.75rem;
+  max-width: 46ch;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  line-height: 1.5;
+  color: #9a7a63;
+}
+
+/* ------------------------------------------------------------------ *
+ * A slot, in the panel and in the hotbar alike
+ * ------------------------------------------------------------------ */
+
+.slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--slot-size, 54px);
+  height: var(--slot-size, 54px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  background-image: var(--slot-sheet);
+  background-size: var(--slot-sheet-size);
+  background-position: var(--slot-idle);
+  background-repeat: no-repeat;
+  /* Nearest-neighbour, or an 18px square upscaled 3x turns to mush. */
+  image-rendering: pixelated;
+}
+
+.slot.is-empty {
+  cursor: default;
+}
+
+.slot:hover:not(.is-empty),
+.slot.is-over {
+  background-position: var(--slot-selected);
+}
+
+/* The slot waiting for its destination. Deliberately loud: a pick-up that is
+   easy to lose track of turns into an accidental swap. */
+.slot.is-picked {
+  background-position: var(--slot-selected);
+  outline: 3px solid var(--cover, #4a2123);
+  outline-offset: -3px;
+}
+
+.slot.is-dragging {
+  opacity: 0.4;
+}
+
+/*
+ * The hotbar row. Marked underneath the slot art rather than on it — a border
+ * would cover the pack's own frame — so the row reads as a strip the twelve
+ * slots are sitting on.
+ */
+.slot.is-hotbar {
+  box-shadow: 0 3px 0 var(--gilt, #ae4924);
+}
+
+.slot__qty {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #2a1018;
+  text-shadow:
+    1px 1px 0 rgba(247, 219, 198, 0.9),
+    -1px 1px 0 rgba(247, 219, 198, 0.9);
+}
+
+@media (max-width: 700px) {
+  .pack {
+    top: 60px;
+    left: 0.5rem;
+    right: 0.5rem;
+    transform: none;
+    width: auto;
+    max-height: 60vh;
+  }
+
+  /* The twelve-wide grid does not fit a phone; it scrolls sideways rather than
+     rewrapping, which would put the hotbar row somewhere other than row one. */
+  .pack__section {
+    overflow-x: auto;
+  }
+}
+
+/*
+ * A slot past the container's current capacity. Only reachable when capacity
+ * SHRANK under stored items — VIP lapsing is the way that happens — so it reads
+ * as "still yours, take it out" rather than as a slot to fill.
+ *
+ * Dimmed and outlined rather than bordered: since T-10.04a the cell IS the
+ * pack's slot art, and a border would sit on top of the frame drawn into it.
+ */
+.slot.is-over-capacity {
+  opacity: 0.55;
+  outline: 2px dotted var(--gilt, #ae4924);
+  outline-offset: -3px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Decoration tray
+ *
+ * Only visible indoors, on the left where the seed picker used to sit before
+ * T-9.06 moved planting onto the hotbar.
+ * ------------------------------------------------------------------ */
+
+.hud__decor {
+  position: absolute;
+  top: 72px;
+  left: 1rem;
+  width: 200px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  padding: 0.75rem;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
+}
+
+.hud__decor[hidden] {
+  display: none;
+}
+
+.hud__decorlist {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.decorrow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+}
+
+.decorrow__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.decorrow__btn {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.15rem 0.4rem;
+  border: 2px solid var(--ink);
+  background: var(--soil);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+
+.decorrow__btn:hover:not(:disabled) {
+  background: var(--soil-deep);
+}
+
+.decorrow__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------ *
+ * Trade (T-4.11, CLAUDE.md §6)
+ *
+ * Same panel language as the shop. The reset alert is the one element that
+ * breaks the quiet paper-and-ink palette on purpose — an offer changing out
+ * from under a confirmation is the one thing in this panel that must not be
+ * missable.
+ * ------------------------------------------------------------------ */
+
+.trade {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 2rem));
+  max-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
+}
+
+.trade[hidden] {
+  display: none;
+}
+
+.trade__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 3px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.trade__title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.trade__expiry {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--soil);
+}
+
+.trade__close {
+  border: 0;
+  background: transparent;
+  color: var(--paper);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.trade__alert {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: #c62828;
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+  animation: trade-alert-flash 0.9s ease-in-out 2;
+}
+
+.trade__alert[hidden] {
+  display: none;
+}
+
+@keyframes trade-alert-flash {
+  0%, 100% { background: #c62828; }
+  50% { background: #8e1c1c; }
+}
+
+.trade__body {
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.trade__hint {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: #6d4738;
+}
+
+.trade__invite {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.trade__input {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  border: 2px solid var(--ink);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.trade__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.trade__btn {
+  padding: 0.4rem 0.9rem;
+  border: 2px solid var(--ink);
+  background: var(--soil);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.trade__btn:hover:not(:disabled) {
+  background: #c9762f;
+}
+
+.trade__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.trade__btn--primary {
+  background: var(--grass-deep);
+  color: var(--paper);
+}
+
+.trade__btn--primary:hover:not(:disabled) {
+  background: #2a5c3a;
+}
+
+.trade__btn--danger {
+  background: transparent;
+  color: var(--barn);
+}
+
+.trade__btn--danger:hover:not(:disabled) {
+  background: rgba(174, 73, 36, 0.15);
+}
+
+.trade__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+@media (max-width: 620px) {
+  .trade__columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.trade__side {
+  border: 2px solid var(--ink);
+  background: var(--paper-raised);
+  padding: 0.5rem;
+  min-width: 0;
+}
+
+.trade__sidehead {
+  margin: 0 0 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.trade__badge {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #6d4738;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.trade__badge.is-confirmed {
+  color: var(--grass-deep);
+}
+
+.trade__items {
+  display: grid;
+  gap: 0.3rem;
+  min-height: 1.6rem;
+}
+
+.trade__empty {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  color: #6d4738;
+}
+
+.trade__add {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.trade__select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+}
+
+.trade__qty {
+  width: 56px;
+  padding: 0.3rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.traderow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  background: var(--paper);
+  border: 1px solid rgba(42, 16, 24, 0.25);
+}
+
+.traderow__icon {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  flex: none;
+}
+
+.traderow__name {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traderow__remove {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--barn);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  flex: none;
+}
+
+@media (max-width: 700px) {
+  .trade {
+    top: 60px;
+    max-height: 55vh;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Trade history (T-4.12)
+ * ------------------------------------------------------------------ */
+
+.trade__history-toggle {
+  margin-left: auto;
+  padding: 0.25rem 0.6rem;
+  border: 2px solid var(--paper);
+  background: transparent;
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.trade__history-toggle:hover {
+  background: rgba(242, 227, 206, 0.15);
+}
+
+.trade__history {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.historyrow {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.45rem 0.55rem;
+  background: var(--paper-raised);
+  border: 1px solid rgba(42, 16, 24, 0.25);
+}
+
+.historyrow__head {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.historyrow__swap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: #6d4738;
+}
+
+.historyrow__arrow {
+  flex: none;
+  color: var(--ink);
+}
+
+.historyrow__side {
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Character creator (T-8.02)
+ *
+ * The one BLOCKING overlay in the game. Every other panel floats over a farm
+ * that is still there to be clicked; this one covers the whole HUD — bar
+ * included — because a farm with no farmer is not a state to be dipped in and
+ * out of.
+ * ------------------------------------------------------------------ */
+
+.creator {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  /* Deep enough to read as "the game is behind glass", not as a dropped panel. */
+  background: rgba(5, 42, 58, 0.82);
+  overflow-y: auto;
+}
+
+.creator[hidden] {
+  display: none;
+}
+
+.creator__card {
+  /* Wide enough for all seven hair styles on one line — one wrapped swatch
+     costs a whole row of height, which is what pushes the clothes row below
+     the fold. */
+  width: min(820px, 100%);
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(2, 19, 27, 0.5);
+}
+
+.creator__head {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 3px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.creator__title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.creator__hint {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(42, 16, 24, 0.25);
+  font-size: 0.72rem;
+  color: #6d4738;
+}
+
+.creator__body {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+  padding: 0.75rem;
+}
+
+/* The preview stays put while the rows scroll past it — it is the thing being
+   decided, so it should never be the thing that scrolls away. */
+.creator__stage {
+  flex: none;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding: 0.6rem;
+  background: var(--grass-deep);
+  border: 3px solid var(--ink);
+}
+
+.creator__preview,
+.creator__swatchart {
+  display: block;
+  /* Integer CSS upscale of a 32x32 canvas. Without this the browser smooths
+     the pixels back into mush no matter how the canvas was drawn. */
+  image-rendering: pixelated;
+}
+
+.creator__rows {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.5rem;
+  /* All six rows fit on a normal viewport; the scroll is the small-window
+     fallback, not the everyday case. A row hidden below the fold is a choice
+     the player never learns they had. */
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+}
+
+.creator__row {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.creator__rowlabel {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6d4738;
+}
+
+.creator__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.creator__swatch {
+  padding: 0.15rem;
+  border: 2px solid rgba(42, 16, 24, 0.35);
+  border-radius: 0;
+  background: var(--paper-raised);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.creator__swatch:hover {
+  border-color: var(--ink);
+  background: var(--soil);
+}
+
+.creator__swatch.is-selected {
+  border-color: var(--ink);
+  background: var(--soil);
+  box-shadow: inset 0 0 0 2px var(--paper-raised);
+}
+
+.creator__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-top: 3px solid var(--ink);
+}
+
+.creator__btn {
+  padding: 0.45rem 0.9rem;
+  border: 3px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.creator__btn:hover:not(:disabled) {
+  background: var(--soil);
+}
+
+.creator__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.creator__btn--primary {
+  background: var(--grass-deep);
+  color: var(--paper-raised);
+}
+
+.creator__btn--primary:hover:not(:disabled) {
+  background: var(--barn);
+}
+
+@media (max-width: 560px) {
+  .creator__body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .creator__stage {
+    align-self: center;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Hotbar (T-8.07)
+ *
+ * A window onto the first twelve backpack slots, not a container of its own.
+ * The slot art is one 18x18 square from `ui-inventory-slots.png`, repeated —
+ * the pack's ready-made bars are 8 and 9 slots wide and this is twelve. Its
+ * position inside the sheet arrives as custom properties set by `hotbar.ts`
+ * from the measured `UI_SLOT` constants, so the coordinates are never retyped
+ * here where nothing could check them.
+ * ------------------------------------------------------------------ */
+
+.hotbar {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  /* The strip itself is dark so the slot art reads against any terrain. */
+  background: rgba(5, 42, 58, 0.72);
+  border: 3px solid var(--ink);
+  max-width: calc(100vw - 1rem);
+  overflow-x: auto;
+}
+
+.hotbar__slot {
+  position: relative;
+  flex: none;
+  width: var(--slot-size);
+  height: var(--slot-size);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  background-image: var(--slot-sheet);
+  background-size: var(--slot-sheet-size);
+  background-position: var(--slot-idle);
+  background-repeat: no-repeat;
+  /* Nearest-neighbour, or an 18px square upscaled 3x turns to mush. */
+  image-rendering: pixelated;
+}
+
+.hotbar__slot.is-selected {
+  background-position: var(--slot-selected);
+  /* The art alone is a subtle lightening; the outline is what makes the
+     selection findable at a glance while the farm is busy behind it. */
+  outline: 3px solid var(--paper-raised);
+  outline-offset: -3px;
+}
+
+.hotbar__slot:hover:not(.is-selected) {
+  background-position: var(--slot-selected);
+}
+
+/* The number key, in the corner, so the keyboard shortcut is discoverable
+   without a tutorial. */
+.hotbar__key {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  /* Same cream-on-outline treatment as the quantity. Ink at low opacity was
+     the first attempt and vanished entirely against the orange slot art —
+     a shortcut hint nobody can read is not a hint. */
+  color: var(--paper-raised);
+  text-shadow: 1px 1px 0 var(--ink), -1px 1px 0 var(--ink), 1px -1px 0 var(--ink),
+    -1px -1px 0 var(--ink);
+  pointer-events: none;
+}
+
+.hotbar__art {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  pointer-events: none;
+}
+
+.hotbar__qty {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--paper-raised);
+  text-shadow: 1px 1px 0 var(--ink), -1px 1px 0 var(--ink), 1px -1px 0 var(--ink),
+    -1px -1px 0 var(--ink);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .hotbar {
+    justify-content: flex-start;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Shipping box (T-11.03)
+ *
+ * Three lists in one column — what you can ship, what is waiting, what it
+ * paid — because that is the whole story of the box and it fits on a card.
+ * ------------------------------------------------------------------ */
+
+.shipping {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, calc(100vw - 2rem));
+  max-height: calc(100vh - 100px);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
+}
+
+.shipping[hidden] {
+  display: none;
+}
+
+.shipping__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 3px solid var(--ink);
+}
+
+.shipping__title {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.shipping__close {
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shipping__hint {
+  margin: 0;
+  padding: 0.6rem 0.75rem 0;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  line-height: 1.5;
+  color: #9a7a63;
+}
+
+.shipping__section {
+  padding: 0.6rem 0.75rem;
+}
+
+.shipping__label {
+  margin: 0 0 0.4rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #6d4738;
+}
+
+.shipping__list {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.shipping__empty {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: #9a7a63;
+}
+
+.shiprow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.4rem;
+  background: var(--paper-raised);
+  border: 2px solid rgba(42, 16, 24, 0.25);
+}
+
+/* A settled row is history, not something to act on. */
+.shiprow.is-paid {
+  background: transparent;
+  border-style: dashed;
+}
+
+.shiprow__icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+}
+
+.shiprow__name {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+}
+
+.shiprow__meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  color: #6d4738;
+}
+
+/* The countdown has its own column so rows do not jitter as digits change. */
+.shiprow__clock {
+  min-width: 5.5ch;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.shiprow__qty {
+  width: 4.5rem;
+  padding: 0.2rem 0.3rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+}
+
+.shiprow__btn {
+  padding: 0.25rem 0.5rem;
+  border: 2px solid var(--ink);
+  background: var(--soil);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.shiprow__btn:hover {
+  background: var(--barn);
+  color: var(--paper);
+}
+
+/* ------------------------------------------------------------------ *
+ * Idle mode (T-13.06)
+ * ------------------------------------------------------------------ */
+
+/*
+ * The wrapper holds two things that sit in different places — a popover under
+ * the bar's Idle button, and a banner across the top — so it takes no space
+ * and catches no clicks of its own. `.hud > *` turns pointer events back on
+ * for direct children, which is why both are positioned rather than nested.
+ */
+.idle {
+  pointer-events: none;
+}
+
+.idle__panel,
+.idle__banner {
+  pointer-events: auto;
+}
+
+.idle__panel {
+  position: absolute;
+  top: 72px;
+  right: 1rem;
+  width: min(280px, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 0 0.75rem 0.85rem;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
+}
+
+.idle__panel[hidden] {
+  display: none;
+}
+
+.idle__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 -0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 3px solid var(--ink);
+}
+
+.idle__title {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.idle__close {
+  padding: 0 0.35rem;
+  border: 2px solid var(--ink);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.idle__close:hover {
+  background: var(--barn);
+  color: var(--paper);
+}
+
+.idle__switch {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border: 3px solid var(--ink);
+  background: var(--paper-raised);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.idle__hint {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+.idle__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.idle__legend {
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.idle__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.idle__task {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.idle__select {
+  padding: 0.3rem 0.35rem;
+  border: 2px solid var(--ink);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+
+/*
+ * Centred under the bar rather than inside the popover: it has to be visible
+ * with everything closed, because it is the only sign that the farm is not
+ * currently the player's to walk around.
+ */
+.idle__banner {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.9rem;
+  background: var(--grass-deep);
+  color: var(--paper-raised);
+  border: 3px solid var(--ink);
+  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.idle__banner[hidden] {
+  display: none;
+}
+
+.idle__stop {
+  padding: 0.25rem 0.6rem;
+  border: 2px solid var(--ink);
+  background: var(--soil);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.idle__stop:hover {
+  background: var(--barn);
+  color: var(--paper);
+}

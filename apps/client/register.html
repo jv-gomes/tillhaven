@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Start your farm — Tillhaven</title>
+    <meta name="description" content="Create a Tillhaven account and claim your farm." />
+    <meta name="theme-color" content="#f2e3ce" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+  </head>
+  <body class="auth">
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="wordmark" href="/">
+          <span data-sprite="wordmark"></span>
+          Tillhaven
+        </a>
+        <nav class="masthead__nav">
+          <a class="btn btn--ghost" href="/login">Log in</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="auth__main">
+      <div class="panel auth__card">
+        <div class="auth__scene" data-scene></div>
+        <div class="auth__body">
+          <p class="eyebrow">New farmer</p>
+          <h1 class="auth__title">Claim your farm.</h1>
+          <p class="auth__lede">
+            Six plots, a small pile of gold, and a season ahead of you.
+          </p>
+
+          <form class="auth__form" data-form novalidate>
+            <div class="field" data-field="username">
+              <label for="username">Farm name</label>
+              <input
+                id="username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                placeholder="greenhollow"
+                required
+              />
+              <p class="field__hint">
+                3–20 characters. Letters, numbers and underscores.
+              </p>
+              <p class="field__error" data-error role="alert"></p>
+            </div>
+
+            <div class="field" data-field="email">
+              <label for="email">Email</label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                placeholder="you@example.com"
+                required
+              />
+              <p class="field__hint">Used for sign-in and account recovery only.</p>
+              <p class="field__error" data-error role="alert"></p>
+            </div>
+
+            <div class="field" data-field="password">
+              <label for="password">Password</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="At least 10 characters"
+                required
+              />
+              <p class="field__hint">
+                Length beats complexity. A short phrase you'll remember works well.
+              </p>
+              <p class="field__error" data-error role="alert"></p>
+            </div>
+
+            <button class="btn btn--primary btn--block" type="submit">
+              Create account
+            </button>
+          </form>
+
+          <p class="auth__notice" data-notice></p>
+
+          <p class="auth__alt">
+            Already farming? <a href="/login">Log in</a>
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="sitefoot">
+      <div class="wrap sitefoot__inner">
+        <p class="mono">Tillhaven · Spring build</p>
+        <nav class="sitefoot__links mono">
+          <a href="/">Home</a>
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/pages/register.ts"></script>
+  </body>
+</html>

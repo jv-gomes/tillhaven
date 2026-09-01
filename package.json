@@ -1,0 +1,26 @@
+{
+  "name": "tillhaven",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.15.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" --filter \"!@tillhaven/mapmaker\" dev",
+    "dev:client": "pnpm --filter @tillhaven/client dev",
+    "dev:server": "pnpm --filter @tillhaven/server dev",
+    "dev:mapmaker": "pnpm --filter @tillhaven/mapmaker dev",
+    "build": "pnpm --filter @tillhaven/shared build && pnpm --filter @tillhaven/client build && pnpm --filter @tillhaven/server build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "assets": "node scripts/prepare-assets.mjs",
+    "plots": "node scripts/generate-plot-layout.mjs",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

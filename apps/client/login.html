@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Log in — Tillhaven</title>
+    <meta name="description" content="Log in to your Tillhaven farm." />
+    <meta name="theme-color" content="#f2e3ce" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+  </head>
+  <body class="auth">
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="wordmark" href="/">
+          <span data-sprite="wordmark"></span>
+          Tillhaven
+        </a>
+        <nav class="masthead__nav">
+          <a class="btn btn--primary" href="/register">Start your farm</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="auth__main">
+      <div class="panel auth__card">
+        <div class="auth__scene" data-scene></div>
+        <div class="auth__body">
+          <p class="eyebrow">Welcome back</p>
+          <h1 class="auth__title">Back to the farm.</h1>
+          <p class="auth__lede">
+            Whatever you planted has been growing the whole time.
+          </p>
+
+          <form class="auth__form" data-form novalidate>
+            <div class="field" data-field="identifier">
+              <label for="identifier">Farm name or email</label>
+              <input
+                id="identifier"
+                name="identifier"
+                type="text"
+                autocomplete="username"
+                placeholder="greenhollow"
+                required
+              />
+              <p class="field__error" data-error role="alert"></p>
+            </div>
+
+            <div class="field" data-field="password">
+              <label for="password">Password</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+              />
+              <p class="field__error" data-error role="alert"></p>
+            </div>
+
+            <button class="btn btn--primary btn--block" type="submit">Log in</button>
+          </form>
+
+          <p class="auth__notice" data-notice></p>
+
+          <p class="auth__alt">
+            No farm yet? <a href="/register">Start one</a>
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="sitefoot">
+      <div class="wrap sitefoot__inner">
+        <p class="mono">Tillhaven · Spring build</p>
+        <nav class="sitefoot__links mono">
+          <a href="/">Home</a>
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/pages/login.ts"></script>
+  </body>
+</html>

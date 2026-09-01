@@ -1,0 +1,70 @@
+/* Terms and Privacy. Long-form reading, same paper as everything else. */
+
+.legal {
+  padding-block: clamp(2.5rem, 7vw, 4.5rem);
+}
+
+.legal__body {
+  max-width: 68ch;
+}
+
+.legal__title {
+  margin-top: 1rem;
+  font-size: clamp(2rem, 5vw, 2.8rem);
+}
+
+/*
+ * The draft warning. Barn red and unmissable, because a placeholder legal page
+ * that reads as finished is worse than no page at all.
+ */
+.legal__stamp {
+  margin-top: 1.75rem;
+  padding: 1rem 1.15rem;
+  border: var(--rule) solid var(--barn);
+  border-left-width: 8px;
+  background: var(--paper-raised);
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.legal__stamp strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--barn-bright);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.legal h2 {
+  margin-top: 2.5rem;
+  font-size: 1.25rem;
+}
+
+.legal h2 + p {
+  margin-top: 0.75rem;
+}
+
+.legal p + p {
+  margin-top: 0.9rem;
+}
+
+.legal code {
+  padding: 0.1em 0.35em;
+  background: var(--paper-sunk);
+  font-family: var(--font-display);
+  font-size: 0.85em;
+}
+
+.legal__back {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 2px dashed var(--ink-faint);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}

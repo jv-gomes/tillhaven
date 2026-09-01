@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tillhaven — an idle farm that runs on real time</title>
+    <meta
+      name="description"
+      content="Plant before work, harvest at lunch. Tillhaven is a browser farming game where crops grow on real-world time, so a closed tab is just another few hours in the field."
+    />
+    <meta name="theme-color" content="#f2e3ce" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+    <link rel="preload" as="image" href="/assets/crop-potato.png" />
+  </head>
+  <body>
+    <a class="visually-hidden" href="#main">Skip to content</a>
+
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="wordmark" href="/">
+          <span data-sprite="wordmark"></span>
+          Tillhaven
+        </a>
+        <nav class="masthead__nav">
+          <a class="btn btn--ghost" href="/login">Log in</a>
+          <a class="btn btn--primary" href="/register">Start your farm</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ============================================================ -->
+      <section class="hero">
+        <div class="wrap hero__grid">
+          <div>
+            <p class="eyebrow">Spring season · Free to play</p>
+            <h1 class="hero__title">
+              Your farm grows <em>while you're gone</em>.
+            </h1>
+            <p class="hero__lede">
+              Plant before work, harvest at lunch. Growth runs on real-world
+              time, so a closed tab is just another few hours in the field.
+            </p>
+            <div class="hero__actions">
+              <a class="btn btn--primary" href="/register">Start your farm</a>
+              <a class="btn" href="/login">Log in</a>
+            </div>
+            <p class="mono hero__meta">
+              No download · One farm per account · Plays in the browser
+            </p>
+          </div>
+
+          <!--
+            The signature element. Six real plots on a real clock, filled in by
+            src/pages/landing.ts. Stage is derived from elapsed wall-clock time
+            on every frame — never accumulated — which is precisely how the game
+            server computes it.
+          -->
+          <div class="panel" data-plot>
+            <div class="panel__head">
+              <span>The plot</span>
+              <span data-plot-clock class="mono">00:00</span>
+            </div>
+            <p class="plot__away" data-plot-away hidden></p>
+            <div class="plot__soil" data-plot-soil></div>
+            <div class="plot__foot">
+              <span>These are growing right now. Close the tab and come back.</span>
+              <span class="mono plot__speed" data-plot-speed></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="section">
+        <div class="wrap">
+          <p class="eyebrow">How growing works</p>
+          <h2 class="section__title">Growth is measured, not watched.</h2>
+          <p class="section__lede">
+            Nothing in Tillhaven ticks in the background. Every plot stores the
+            moment it was planted, and its stage is worked out from the clock
+            the instant you look at it. That is why offline progress is exact:
+            eight hours away is eight hours of growing, whether the tab was open
+            or your laptop was shut.
+          </p>
+          <div class="stages" data-stages></div>
+          <p class="mono section__lede" data-stages-caption></p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="section section--sunk">
+        <div class="wrap">
+          <p class="eyebrow">The seed catalogue</p>
+          <h2 class="section__title">Four crops to start the season.</h2>
+          <p class="section__lede">
+            Cheap seeds turn over fast and keep the early days moving. The
+            expensive ones pay better but ask you to come back tomorrow. Every
+            figure below is read from the same config file the game server uses,
+            so what you see here is what you'll get in the field.
+          </p>
+          <div class="catalogue" data-crops></div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="section">
+        <div class="wrap">
+          <p class="eyebrow">The barnyard</p>
+          <h2 class="section__title">Animals produce on their own schedule.</h2>
+          <p class="section__lede">
+            Chickens arrive as chicks and need to grow up before they lay. Feed
+            an animal and it produces; forget to, and it simply stops until you
+            do. No animal is ever lost.
+          </p>
+          <div class="catalogue" data-animals></div>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="section section--sunk">
+        <div class="wrap split">
+          <div>
+            <p class="eyebrow">Trading</p>
+            <h2 class="section__title">Both hands on the table.</h2>
+            <p class="section__lede">
+              Player-to-player trading is where farming games get people
+              cheated. Tillhaven's trade window is built to make the common
+              scams impossible rather than to make them reportable.
+            </p>
+            <p class="note">
+              Tillhaven does not host, process, or take a cut of real-money
+              trades, and does not support them. Anything you arrange for cash
+              outside the game is at your own risk, and we cannot recover it.
+            </p>
+          </div>
+          <ul class="rules">
+            <li>
+              <span
+                ><strong>Both players confirm.</strong> Change your offer after
+                your partner has confirmed and both confirmations reset. There
+                is no window where one side is locked in and the other is
+                still editing.</span
+              >
+            </li>
+            <li>
+              <span
+                ><strong>All at once or not at all.</strong> The swap runs as a
+                single database transaction. Either every item moves, or none
+                does — a dropped connection mid-trade cannot leave items
+                halfway.</span
+              >
+            </li>
+            <li>
+              <span
+                ><strong>Checked again at the last moment.</strong> The server
+                re-verifies that both players still hold everything they offered
+                at the instant of execution, not when the window opened.</span
+              >
+            </li>
+            <li>
+              <span
+                ><strong>Written down permanently.</strong> Every completed
+                trade goes into an audit log we cannot edit, and you can read
+                your own trade history at any time.</span
+              >
+            </li>
+            <li>
+              <span
+                ><strong>Not on day one.</strong> Trading unlocks once an
+                account is a day old and has reached farm level 5, which makes
+                throwaway-account scams expensive to run.</span
+              >
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="section">
+        <div class="wrap split">
+          <div>
+            <p class="eyebrow">VIP</p>
+            <h2 class="section__title">One payment. Not a subscription.</h2>
+            <p class="section__lede">
+              VIP is a single purchase that lasts 30 days. Nothing renews,
+              nothing bills you again, and there is no card on file to cancel.
+              When it runs out, it runs out.
+            </p>
+            <p class="note">
+              VIP saves you time and gives you things to look at. It never gives
+              you power. A VIP farm cannot produce anything a free farm cannot,
+              and VIP cosmetics can never be traded — otherwise paying players
+              would be minting value in an economy other players share.
+            </p>
+          </div>
+          <ul class="rules" data-vip></ul>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <section class="closer">
+        <div class="wrap">
+          <div class="closer__scene" data-closer-scene></div>
+          <h2 class="closer__title">Six plots are waiting.</h2>
+          <p class="section__lede" style="margin-inline: auto; text-align: center">
+            Sign up, plant something, and close the tab. That's the whole
+            tutorial.
+          </p>
+          <div class="closer__actions">
+            <a class="btn btn--primary" href="/register">Start your farm</a>
+            <a class="btn" href="/login">Log in</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="sitefoot">
+      <div class="wrap sitefoot__inner">
+        <p class="mono">Tillhaven · Spring build</p>
+        <nav class="sitefoot__links mono">
+          <a href="/login">Log in</a>
+          <a href="/register">Register</a>
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/pages/landing.ts"></script>
+  </body>
+</html>

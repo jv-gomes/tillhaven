@@ -1,0 +1,1 @@
+ALTER TABLE "players" ADD COLUMN "backpack_tier" integer DEFAULT 0 NOT NULL;

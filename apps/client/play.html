@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Tillhaven</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#052a3a" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #052a3a;
+        overflow: hidden;
+      }
+
+      #game {
+        width: 100vw;
+        height: 100svh;
+      }
+
+      #game canvas {
+        display: block;
+        image-rendering: pixelated;
+      }
+
+      /* Shown only if Phaser never boots, so a failure is never a blank screen. */
+      #fallback {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 1rem;
+        padding: 2rem;
+        color: #f2e3ce;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 0.8rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      #fallback a {
+        color: #ee9d51;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="fallback">
+      <p>Tillhaven could not start.</p>
+      <p><a href="/">Back to the farm gate</a></p>
+    </div>
+    <div id="game"></div>
+    <script type="module" src="/src/game/main.ts"></script>
+  </body>
+</html>
