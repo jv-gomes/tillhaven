@@ -4,22 +4,111 @@
  *
  * The game world is always daylight, so these are pinned colours rather than
  * theme tokens.
+ *
+ * **The palette is SAMPLED from the art, not invented** (T-15.26). Every value
+ * below was read out of the pack with a pixel histogram — the exact numbers are
+ * in each comment — so the HUD is literally the same set of colours as the farm
+ * it sits over, rather than a near-miss that reads as a different product
+ * bolted on. It was a near-miss before: `--ink` was #2a1018 against the pack's
+ * #1c0a18, and `--paper` #f2e3ce against #f7dbc6. Close enough to look
+ * deliberate, far enough to look wrong beside the inventory book.
+ *
+ * No webfont. The pack ships no typeface, and adding one would mean a second
+ * licence in ATTRIBUTION.md for a decision nobody has taken yet — so the HUD
+ * stays on the system mono stack and does its work with colour, edges and the
+ * pack's own button plate.
  */
 
 .hud {
-  --ink: #2a1018;
-  --paper: #f2e3ce;
-  --paper-raised: #fbf1e2;
-  --soil: #ee9d51;
-  --grass-deep: #347349;
-  --barn: #ae4924;
+  /* Outline black on every button plate and on the inventory book. */
+  --ink: #1c0a18;
+  /* The inventory book's paper — 24,632 px of it, the pack's dominant light. */
+  --paper: #f7dbc6;
+  /* Warm tan, from the book's inner panel and the farmhouse wall. */
+  --paper-raised: #fdeade;
+  /* Mid-brown, from the book's border and the farmhouse's dark timber. */
+  --frame: #4a2123;
+  /*
+   * Quiet text on the HUD's paper (T-27.01).
+   *
+   * There were **three** of these doing one job, and two of them failed WCAG AA
+   * on `--paper`: the token `--muted` (#ab6659, sampled from the book's shadow
+   * tone) at 3.33:1, and a literal #9a7a63 copy-pasted into three rules at
+   * 2.98:1 — the old site `--ink-faint`, hardcoded, so darkening the token in
+   * `base.css` did not touch it. axe caught only one of the three, because the
+   * other two were not on screen during the audit.
+   *
+   * `--faint` replaces both. #8d5449 keeps the book's shadow hue and reaches
+   * 4.55 on `--paper`, 5.15 on `--paper-raised`. One token, one number, checked
+   * by `styles/contrast.test.ts`.
+   *
+   * The other literal in this file, #6d4738, is left alone: it measures 6.10
+   * and was never the problem.
+   */
+  --faint: #875146;
+  --soil: #c46120;
+  --grass-deep: #306b44;
+  /*
+   * The pack's signature rust: button plates, the barn, the book's spine.
+   *
+   * **Sampled #ae4924; rendered #a64622, and the difference is a contrast fix**
+   * (T-27.01). Every bar button is `--paper` text on this plate, at 10.88px
+   * bold — small text, so WCAG AA wants 4.5:1 and the sampled colour measured
+   * **4.21**. Darkening it 4.5% reaches 4.52.
+   *
+   * This is the one place T-15.26's "the palette is sampled from the art" is
+   * knowingly bent, so the sampled value is recorded above rather than lost.
+   * The alternatives were worse: text large enough to qualify for the 3:1
+   * threshold means 18.66px bold in a bar that already has to wrap at 390px,
+   * and swapping the plate for `--frame` throws away the pack's signature
+   * colour to fix a 0.3 shortfall. 4.5% of one channel is not a different
+   * colour; it is the same colour, legibly.
+   */
+  --barn: #9f4321;
+  /*
+   * `--soil` darkened to the same standard, for the ONE place `--paper` text
+   * sits on it: a hovered bar button, which measured 3.13:1. Scoped to its own
+   * token rather than changing `--soil`, which is used ten times in this file —
+   * most of them behind `--ink`, where it already passes comfortably. Fixing
+   * the token would have restyled the gold pill to solve a problem the gold
+   * pill does not have.
+   */
+  --soil-deep: #9c4d19;
+  /*
+   * The sleeping banner's plate (MVP re-scope). Declared here rather than
+   * borrowed from `base.css`, which the game page does not load — a
+   * `var(--night)` in this file resolves to nothing and paints the banner
+   * transparent, which is how it was found: the countdown rendered as cream
+   * text directly on the grass.
+   */
+  --night: #052a3a;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /*
+   * **The CSS button bevel is gone — Phase U put the pack's real plate back.**
+   *
+   * This token used to be the depth of a hand-drawn bevel, and the comment here
+   * explained at length why `border-image` could not be used: the plate is a
+   * 48x16 region at (0,16) of an 848x544 sheet, and `border-image` slices from
+   * the source image's own outer edges, so a 5px slice took pixels from four
+   * unrelated corners. That was true, and it was a fact about the FILE.
+   *
+   * `scripts/lib/ui-crops.mjs` cuts each plate into its own file, so the
+   * objection is gone rather than worked around. Buttons now wear
+   * `ui-plate-*.png` (see `ui.css`), including the pack's own pressed art —
+   * which is a pixel shorter than the raised plate, a detail no CSS bevel was
+   * ever going to reproduce.
+   *
+   * The token is kept because `--decor-lift` and the touch controls still read
+   * it for their own inset shadows, which are not buttons and have no plate.
+   */
+  --btn-lift: 2px;
 
   position: fixed;
   inset: 0;
   /* The canvas underneath must stay clickable; only the panels catch events. */
   pointer-events: none;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--pixel);
   color: var(--ink);
 }
 
@@ -31,42 +120,121 @@
  * Top bar
  * ------------------------------------------------------------------ */
 
-.hud__bar {
+/*
+ * **The full-width bar is gone (Phase U2).**
+ *
+ * It was `position: absolute; inset: 0 0 auto 0` — a header spanning the whole
+ * viewport, holding a brand, five readouts and nine labelled buttons, and
+ * costing the farm its top ~70px everywhere. The design reference has no bar:
+ * a status cluster in one corner, a stack of icon buttons in the other, world
+ * in between.
+ *
+ * **T-18.23/BUG-05 is retired with it, and that is worth recording rather than
+ * silently dropping.** That task made the bar wrap because at 390px its 842px
+ * of content pushed six controls — including the only way to log out — off the
+ * screen. A vertical rail of fixed-width squares has no horizontal sum to
+ * overflow, so the failure mode is gone rather than mitigated. What a narrow
+ * screen needs now is different: the rail must not run into the hotbar, which
+ * the media query at the foot of this file handles by dropping the plate scale.
+ *
+ * `hud.barHeight()` still measures a real element for the camera (T-18.03); it
+ * measures the status cluster now, which is what sits at the top of the screen.
+ */
+
+/* The left rail: icon buttons, stacked, clear of the character's walking room. */
+.hud__rail {
   position: absolute;
-  inset: 0 0 auto 0;
+  top: 0.75rem;
+  left: 0.75rem;
   display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.6rem 1rem;
-  background: var(--paper);
-  border-bottom: 3px solid var(--ink);
+  flex-direction: column;
+  gap: 0.35rem;
+  /*
+   * A rail taller than the viewport must scroll rather than run under the
+   * hotbar. Nine buttons at 44px is 400px, so this only ever bites on a short
+   * landscape phone — but that is exactly the case BUG-05 was about.
+   */
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.hud__brand {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+/*
+ * The right cluster: clock, name, gold, level, energy.
+ *
+ * A fixed width rather than a shrink-to-fit, because everything in it changes
+ * length — gold goes from 3 digits to 6, the farm name is player-supplied, the
+ * energy fraction is 3 to 7 characters — and a cluster that resizes as you play
+ * is a cluster that never sits still. 15rem holds "999,999g" without wrapping.
+ */
+.hud__status {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  /* Or the 16px timber border is added OUTSIDE the width and the cluster is
+     32px wider than it claims — which is how it reached 310px on a 390px
+     screen while asking for 272. */
+  box-sizing: border-box;
+  width: min(17rem, calc(100vw - 5rem));
+}
+
+/*
+ * On a phone the cluster cannot have 17rem; that is 70% of a 390px screen for
+ * a readout. The dial drops to 1x and the whole thing to what is left beside
+ * the rail — still the same three rows, just not the main event.
+ */
+@media (max-width: 30rem) {
+  .hud__status {
+    gap: 0.45rem;
+    padding: 0.35rem 0.5rem;
+    width: calc(100vw - var(--rail-clear) - 1.5rem);
+  }
+
+  .hud__clock {
+    width: 32px;
+    height: 32px;
+    background-size: 32px 32px;
+  }
+
+  .hud__clockhand {
+    background-size: 256px 32px;
+    background-position: calc(var(--clock-frame, 0) * -32px) 0;
+  }
+}
+
+.hud__readouts {
+  display: grid;
+  gap: 0.28rem;
+  /* `min-width: 0` alone is not enough — the grid needs a column that is
+     allowed to shrink, or the gold pill's tabular digits set a floor. */
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
 }
 
 .hud__name {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  color: #6d4738;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
+  color: var(--paper);
+  /* A long farm name must not widen the cluster past its max. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hud__gold {
-  margin-left: auto;
   display: flex;
   align-items: center;
+  /* Shrink to the number (Phase U2) — a grid item stretches by default. */
+  justify-self: start;
   gap: 0.45rem;
-  padding: 0.3rem 0.7rem;
-  background: var(--soil);
-  border: 3px solid var(--ink);
-  font-family: var(--mono);
-  font-size: 0.78rem;
+  padding: 0.2rem 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -103,20 +271,115 @@
   }
 }
 
+/*
+ * The gold readout reacting to its own number changing (T-30.05).
+ *
+ * CSS rather than a Phaser tween: the chip is DOM, and a stylesheet honours
+ * `prefers-reduced-motion` with no branch in the code to forget. Scale only —
+ * the number must not move, or it becomes briefly unreadable at the exact
+ * moment the player looked at it.
+ */
+.hud__gold [data-gold].is-bumped {
+  display: inline-block;
+  animation: hud-gold-bump 260ms ease-out;
+}
+
+@keyframes hud-gold-bump {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud__gold [data-gold].is-bumped {
+    animation: none;
+  }
+}
+
+/*
+ * Farm level and progress (T-30.02).
+ *
+ * Deliberately quieter than the gold block beside it. Gold is the number a
+ * player acts on constantly — buying seeds, checking a price — while level is
+ * something they glance at. Giving both the same weight would make the bar
+ * read as two competing scores; the level pip borrows gold's soil chip so they
+ * are visibly the same family, and the bar itself is small.
+ */
+/*
+ * `flex: none`, and this is the whole reason the first attempt was wrong.
+ *
+ * The chip was written shrinkable, on the theory that giving up track was
+ * cheaper than pushing a button off the bar. Measured at 1440x900 it produced a
+ * **34px track** — the bar had room and was crushed anyway, because `.hud__bar`
+ * is `flex-wrap: wrap` and a shrinkable item is squeezed BEFORE the row wraps.
+ * A 34px progress bar is not a progress bar; it is a dash.
+ *
+ * Refusing to shrink makes it wrap to the next line instead, which is what
+ * every other chip in this bar already does and what the wrap was for.
+ */
+.hud__xp {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.hud__level {
+  flex: none;
+  padding: 0.3rem 0.55rem;
+  color: var(--ink);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hud__xpbar {
+  /* A real width, not a basis — see the note on `.hud__xp`. The narrow-viewport
+     rule below trims it deliberately rather than letting flex do it by
+     accident. */
+  flex: none;
+  width: 96px;
+  height: 12px;
+  overflow: hidden;
+}
+
+.hud__xpfill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--grass-deep);
+  /*
+   * The one animation here, and it is the bar catching up rather than a
+   * flourish: `setExperience` moves it on the harvest response and the poll
+   * reconciles it later, so an instant jump would happen twice for one event.
+   */
+  transition: width 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud__xpfill {
+    transition: none;
+  }
+}
+
 .hud__btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.4rem 0.8rem;
-  border: 3px solid var(--ink);
-  border-radius: 0;
-  background: var(--paper-raised);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  /*
+   * Padding accounts for the 15px border-image frame, so the label sits inside
+   * the plate's raised face rather than on its bevel.
+   */
+  color: var(--paper);
+  /* Hard-edged, whole-pixel bevel — no blur, so it reads as drawn, not lit. */
   cursor: pointer;
 }
 
@@ -135,8 +398,35 @@
   background-position: var(--icon-bag);
 }
 
-.hud__btn:hover {
-  background: var(--soil);
+/*
+ * A bar button with `hidden` is actually hidden (T-24.03, BUG-24).
+ *
+ * `.hud__btn` sets `display: inline-flex`, and a class rule beats the user
+ * agent's `[hidden] { display: none }` — so `button.hidden = true` set the
+ * attribute and changed nothing on screen. **This had been live since T-18.20:**
+ * an account that already had VIP was still shown the button offering to sell
+ * it, which is exactly what that button's own comment says must not happen.
+ *
+ * Every panel in this file already carries its own `[hidden]` rule for the same
+ * reason (`.shop[hidden]`, `.pack[hidden]`, `.creator[hidden]`, and seven more).
+ * Buttons were the one family that set `display` and never got one. `.hud__btn`
+ * is the only class in the bar that sets `display`; `.hud__coach` and
+ * `.hud__thirsty` do not, which is why their `hidden` has always worked and why
+ * this went unnoticed.
+ */
+.hud__btn[hidden] {
+  display: none;
+}
+
+/*
+ * Hover and press both live in `ui.css` now: hover lightens the whole plate,
+ * and pressing swaps to the pack's 15px-tall pressed art rather than inverting
+ * a CSS bevel that was standing in for it.
+ */
+
+.hud__btn:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 /* ------------------------------------------------------------------ *
@@ -145,12 +435,168 @@
 
 .hud__label {
   margin: 0 0 0.6rem;
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #6d4738;
+}
+
+/* ------------------------------------------------------------------ *
+ * Energy and the clock (MVP re-scope)
+ * ------------------------------------------------------------------ */
+
+/*
+ * Every colour here is sampled from `UI/Bars.png`'s cyan bar — the fill, its
+ * top highlight and its shadow, in the pack's own values. The green bar on the
+ * sheet directly above it is what the XP bar already looks like, which is
+ * exactly why energy takes the cyan one: two green bars side by side in the
+ * same strip is one bar the player has to read twice to tell apart.
+ */
+:root {
+  --energy: #2eafc7;
+  --energy-lit: #a7fce6;
+  --energy-shade: #286ed0;
+}
+
+.hud__energy {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.hud__energybar {
+  /* Fills the row (Phase U2), same as the XP bar above it. */
+  flex: 1;
+  min-width: 0;
+  height: 12px;
+  overflow: hidden;
+}
+
+.hud__energyfill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  /*
+   * Three stops, lit along the top and shaded along the bottom — but the colours
+   * are the pack's now (Phase U). `--energy` is #2eafc7, sampled off the cyan
+   * track in `Bars.png`, which is the art `assets.ts` said the energy bar should
+   * take its look from and which nothing had copied until this phase.
+   */
+  background: linear-gradient(
+    to bottom,
+    var(--energy-lit) 0 2px,
+    var(--energy) 2px 8px,
+    var(--energy-shade) 8px 100%
+  );
+  transition: width 220ms ease-out;
+}
+
+/* Spending is instant and the bar is the feedback; the XP bar's catch-up
+   animation is for a value that arrives twice, which this one does not. */
+@media (prefers-reduced-motion: reduce) {
+  .hud__energyfill {
+    transition: none;
+  }
+}
+
+/*
+ * **Empty is red, and it is the only state change in the bar.** Out of energy
+ * is the one condition that stops every action in the game, and a player whose
+ * next keypress will be refused should be able to see that without reading a
+ * number.
+ */
+.hud__energy[data-empty] .hud__energyfill {
+  background: var(--barn);
+}
+
+.hud__energynum {
+  flex: none;
+  /* On the dark cluster, not on paper (Phase U2): ink here measured 1.4:1. */
+  color: var(--paper);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * The clock: the pack's 32x32 face with its eight-position hand laid over it.
+ * Both are `image-rendering: pixelated` and scaled by a whole number, per the
+ * asset rules — a fractional scale on 32px art is mush.
+ */
+.hud__clock {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  background-image: url('/assets/ui-clock.png');
+  /* 2x, an INTEGER scale — a 1.5x dial lands on half pixels and goes soft. */
+  background-size: 64px 64px;
+  image-rendering: pixelated;
+}
+
+.hud__clockhand {
+  position: absolute;
+  inset: 0;
+  background-image: url('/assets/ui-clock-hand.png');
+  /* 8 frames of 32px. `--clock-frame` is set from `hud.ts`. */
+  background-size: 512px 64px;
+  background-position: calc(var(--clock-frame, 0) * -64px) 0;
+  image-rendering: pixelated;
+}
+
+/* Text that exists only for a screen reader — the clock face is the visual. */
+.hud__sronly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ *
+ * Sleeping (MVP re-scope)
+ * ------------------------------------------------------------------ */
+
+/*
+ * The same position and shape as `.idle__banner`, because it is the same kind
+ * of message: the character is no longer the player's to walk around, and the
+ * one control that gives it back has to be visible with every panel closed.
+ *
+ * `--night` is declared in this file's own token block, not `base.css`. The
+ * game page loads only `hud.css` and `game.css`, so a token that exists only
+ * on the landing page resolves to nothing here — see the note by the
+ * declaration.
+ */
+.hud__sleep {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.9rem;
+  pointer-events: auto;
+  color: var(--paper-raised);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 700;
+  /*
+   * Bounded rather than `nowrap`: the longest string plus the button measures
+   * past a 390px phone, and a banner that overflows the viewport can push its
+   * own Get-up button off screen — the one thing it exists to offer.
+   */
+  max-width: calc(100vw - 2rem);
+}
+
+.hud__sleep[hidden] {
+  display: none;
 }
 
 /* ------------------------------------------------------------------ *
@@ -172,13 +618,9 @@
 .toast {
   margin: 0;
   padding: 0.6rem 1rem;
-  border: 3px solid var(--ink);
-  background: var(--paper-raised);
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
   transition: opacity 250ms ease, transform 250ms ease;
 }
 
@@ -206,6 +648,18 @@
   .hud__toasts {
     bottom: 36vh;
   }
+
+  /*
+   * The top bar wraps to four rows on a 390px phone and swallows anything at
+   * `top: 72px` — measured, not guessed: the banner rendered on top of the Bag
+   * and Goals buttons with its own Get-up button overlapping theirs. So on
+   * narrow screens it moves to the empty middle of the field instead, clear of
+   * the wrapped bar above and of the toasts and hotbar below.
+   */
+  .hud__sleep {
+    top: auto;
+    bottom: 46vh;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -224,9 +678,6 @@
   max-height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
 }
 
 .shop[hidden] {
@@ -238,16 +689,13 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.75rem;
-  border-bottom: 3px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
+  /* Frame and colour: `ui.css`, the timber board. */
 }
 
 .shop__title {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 800;
-  letter-spacing: 0.18em;
   text-transform: uppercase;
 }
 
@@ -263,8 +711,8 @@
   border-radius: 0;
   background: transparent;
   color: var(--paper);
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -278,10 +726,8 @@
 }
 
 .shop__close {
-  border: 0;
-  background: transparent;
   color: var(--paper);
-  font-size: 1.3rem;
+  font-size: var(--t-title);
   line-height: 1;
   cursor: pointer;
   padding: 0 0.25rem;
@@ -298,8 +744,8 @@
   margin: 0;
   padding: 1rem;
   text-align: center;
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   color: #6d4738;
 }
 
@@ -318,7 +764,131 @@
 
 /* Nothing affordable, or nothing held. Visibly out of reach, rather than a
    button that fails when pressed. */
-.shoprow.is-disabled {
+/*
+ * A disabled row fades its LEAVES, not itself (T-18.14).
+ *
+ * `opacity` on the row applied to everything inside it including the reason the
+ * row is disabled — and opacity on a parent cannot be undone by a child, so the
+ * one part that has to stay readable was the one part guaranteed to be greyed.
+ * Fading the icon, the name and the button leaves the price line alone.
+ */
+/*
+ * The VIP button (T-18.20).
+ *
+ * Visually apart from the other bar buttons, because it is the one control that
+ * spends REAL money rather than gold. §7's whole concern is that a player
+ * economy with informal RMT around it must not blur the two, and a purchase
+ * button that looks exactly like "Bag" is that blurring in miniature.
+ */
+/* The plate that makes it distinct is in `ui.css` — the pack's one cool family. */
+
+/*
+ * "Needs a keyboard" (T-18.23, BUG-05, D-19).
+ *
+ * Hidden by default and shown only where it is TRUE: a coarse primary pointer
+ * (no mouse) on a narrow viewport. A tablet docked to a keyboard reports a fine
+ * pointer and never sees it; a laptop never sees it at any width.
+ *
+ * Informational, not a wall. `pointer: coarse` is a heuristic — a Bluetooth
+ * keyboard on a phone is unusual but real — so this explains and gets out of
+ * the way rather than refusing to load the game.
+ */
+/*
+ * "Tillhaven needs a keyboard" — RETIRED by T-28.02 (D-19).
+ *
+ * It was true when T-18.23 wrote it: `bindKeys` drove movement, `E`/`Space`
+ * acted, and the only pointer handler in the whole client bought a plot, so a
+ * touch device genuinely could not move the character. D-19 has since been
+ * decided and built — a coarse pointer now gets a stick and an action button
+ * instead of an apology — so the note stays hidden at every size.
+ *
+ * The element is left in the markup rather than deleted, because the honest
+ * message for a device that somehow gets neither controls nor a keyboard is
+ * still this one. `touch.css` shows the controls under the same media query
+ * this used to fire on, so the two can never both appear.
+ */
+.hud__needskeys {
+  display: none;
+}
+
+/*
+ * The onboarding line (T-18.17, F-5).
+ *
+ * Sits above the hotbar, centred, in the HUD's own parchment so it reads as
+ * part of the frame rather than as something drawn on the farm. Deliberately
+ * NOT a modal or a numbered tour: it does not interrupt, there is nothing to
+ * dismiss, and it retires itself once the player has harvested once.
+ *
+ * `pointer-events: none` because it overlaps the play area and must never eat a
+ * click meant for the world behind it.
+ */
+.hud__coach {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 4.6rem;
+  margin: 0;
+  padding: 0.3rem 0.7rem;
+  max-width: min(46rem, 90vw);
+  text-align: center;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  line-height: 1.3;
+  /*
+   * The coach speaks in the same box the merchant does (Phase U) — it is the
+   * game talking to the player, which is the merchant's job too.
+   *
+   * It also drops three off-palette literals: #f2e3ce, #8a5a3b and a 3px
+   * radius, none of which were in the sampled set. T-15.26 went through this
+   * file replacing near-miss colours with measured ones and missed these,
+   * because a hint that only shows in the first session is not on screen when
+   * anyone audits.
+   */
+  color: var(--ink);
+  border-style: solid;
+  border-width: calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-dialogue.png');
+  border-image-slice: 5 fill;
+  border-image-repeat: round;
+  image-rendering: pixelated;
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/*
+ * The thirsty-plot count (T-18.16, F-2).
+ *
+ * The same warm red the shop's refusal reasons use, because it is the same
+ * kind of message: a specific thing you can go and fix. Deliberately NOT the
+ * gold counter's styling — gold is a number you watch, this is a number you
+ * are meant to act on and then never see again.
+ */
+.hud__thirsty {
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 700;
+  /*
+   * **This badge went unreadable when the top bar became timber, and a test
+   * caught it rather than an audit.** The old #a8442f is a dark red that measured 4.24
+   * on the old cream bar — fine — and 2.83 on the dark plank, which is a
+   * warning nobody can read. It is the pack's brighter red now (from the tag
+   * set), 4.73 on the plank.
+   *
+   * Worth recording because it is the failure mode of reskinning generally: the
+   * text did not change, the surface under it did, and only the surface was
+   * being looked at.
+   */
+  color: #f6464e;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.shoprow.is-disabled .shoprow__icon,
+.shoprow.is-disabled .shoprow__name,
+.shoprow.is-disabled .shoprow__qty,
+.shoprow.is-disabled .shoprow__btn {
   opacity: 0.45;
 }
 
@@ -338,8 +908,8 @@
 }
 
 .shoprow__name {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -347,10 +917,25 @@
 }
 
 .shoprow__meta {
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   color: #6d4738;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Why a Buy button is dead (T-18.14, BUG-13).
+ *
+ * Its own colour, and a warm red rather than the meta line's brown: the row is
+ * already greyed by `.is-disabled`, so a reason in the same tone as the price
+ * disappears into the thing it is explaining. This is the one part of a
+ * disabled row that has to stay readable.
+ */
+.shoprow__reason {
+  /* 4% darker than the #a8442f it was, to hold 4.5:1 on the tan panel interior
+     Phase U introduced — it measured 4.24 there. Same colour, legibly. */
+  color: #a1412d;
+  font-weight: 700;
 }
 
 .shoprow__qty {
@@ -361,22 +946,18 @@
   border-radius: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-variant-numeric: tabular-nums;
   flex: none;
 }
 
 .shoprow__btn {
   padding: 0.35rem 0.8rem;
-  border: 2px solid var(--ink);
-  border-radius: 0;
-  background: var(--soil);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
   flex: none;
@@ -431,9 +1012,6 @@
   max-height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
-  background: var(--page);
-  border: 3px solid var(--cover);
-  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
   overflow-y: auto;
 }
 
@@ -453,25 +1031,21 @@
   align-items: center;
   gap: 0.6rem;
   padding: 0.6rem 0.75rem;
-  background: var(--cover);
-  color: var(--page);
+  /* Frame and colour: `ui.css`, the timber board. */
 }
 
 .pack__title {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .pack__close {
   margin-left: auto;
   padding: 0 0.3rem;
-  border: 0;
-  background: transparent;
   color: inherit;
-  font-size: 1.1rem;
+  font-size: var(--t-num);
   line-height: 1;
   cursor: pointer;
 }
@@ -495,10 +1069,9 @@
   align-items: center;
   gap: 0.5rem;
   margin: 0 0 0.5rem;
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #6d4738;
 }
@@ -516,9 +1089,8 @@
   background: var(--gilt);
   color: var(--page);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -548,10 +1120,10 @@
   margin: 0;
   padding: 0 0.75rem 0.75rem;
   max-width: 46ch;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   line-height: 1.5;
-  color: #9a7a63;
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------ *
@@ -565,17 +1137,10 @@
   width: var(--slot-size, 54px);
   height: var(--slot-size, 54px);
   padding: 0;
-  border: 0;
-  border-radius: 0;
   color: inherit;
   font: inherit;
   cursor: pointer;
-  background-image: var(--slot-sheet);
-  background-size: var(--slot-sheet-size);
-  background-position: var(--slot-idle);
-  background-repeat: no-repeat;
   /* Nearest-neighbour, or an 18px square upscaled 3x turns to mush. */
-  image-rendering: pixelated;
 }
 
 .slot.is-empty {
@@ -612,8 +1177,8 @@
   position: absolute;
   right: 3px;
   bottom: 1px;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #2a1018;
@@ -658,19 +1223,23 @@
  *
  * Only visible indoors, on the left where the seed picker used to sit before
  * T-9.06 moved planting onto the hotbar.
+ *
+ * **Restyled in T-16.14** to the sampled palette and the plate idiom the rest
+ * of the HUD took in T-15.26. It had been unreachable since T-11.05, so it kept
+ * the pre-Phase-15 look while every panel around it changed — which nobody saw,
+ * because there was no way indoors until T-16.12.
  * ------------------------------------------------------------------ */
 
 .hud__decor {
   position: absolute;
   top: 72px;
-  left: 1rem;
-  width: 200px;
+  /* Clear of the icon rail (Phase U2). */
+  left: var(--rail-clear);
+  width: 216px;
   max-height: calc(100vh - 100px);
   overflow-y: auto;
   padding: 0.75rem;
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
+  /* 6px to match `.shop` and `.pack`; it was 4px, from before T-15.26. */
 }
 
 .hud__decor[hidden] {
@@ -686,8 +1255,18 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  /*
+   * The border is TRANSPARENT rather than absent (T-16.14).
+   *
+   * `.decorrow[aria-pressed='true']` — the armed-piece highlight on the farm
+   * tray — sets `border-color`, which had nothing to colour: the rule has been
+   * a no-op since T-15.24, so an armed piece got its background and none of the
+   * outline that was meant to make it obvious from across the farm.
+   */
+  padding: 0.2rem 0.25rem;
+  border: 2px solid transparent;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
 }
 
 .decorrow__name {
@@ -699,22 +1278,56 @@
 .decorrow__btn {
   margin-left: auto;
   flex: 0 0 auto;
-  padding: 0.15rem 0.4rem;
-  border: 2px solid var(--ink);
-  background: var(--soil);
-  color: var(--ink);
+  padding: 0.2rem 0.45rem;
+  color: var(--paper);
+  /* The same whole-pixel bevel every other button plate uses (T-15.26). */
   font: inherit;
-  font-size: 0.62rem;
+  font-size: var(--t-label-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(28, 10, 24, 0.65);
   cursor: pointer;
 }
 
 .decorrow__btn:hover:not(:disabled) {
-  background: var(--soil-deep);
+  filter: brightness(1.12);
 }
 
+/* Pressed swaps to the pack's pressed plate — see `ui.css`, which owns it. */
+
+/*
+ * Cannot afford it. Flat and drained rather than dimmed: an opacity fade over
+ * a busy pixel background reads as "still loading", and the player needs to see
+ * that the price is the problem.
+ */
 .decorrow__btn:disabled {
-  opacity: 0.45;
+  background: var(--paper-raised);
+  color: var(--faint);
+  box-shadow: none;
+  text-shadow: none;
   cursor: default;
+}
+
+/* A piece already owned. Green, because it is an action rather than a price. */
+.decorrow__btn--place {
+  background: var(--grass-deep);
+}
+
+/* VIP exclusives carry a star; it has to read as a mark, not as punctuation. */
+.decorrow__vip {
+  color: var(--barn);
+  font-weight: 700;
+}
+
+/*
+ * "Leave house" is the panel's way out, so it gets the full width rather than
+ * sitting inline with the list it is not part of.
+ */
+.hud__btn--leave {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 0.7rem;
 }
 
 /* ------------------------------------------------------------------ *
@@ -735,9 +1348,6 @@
   max-height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
 }
 
 .trade[hidden] {
@@ -755,26 +1365,23 @@
 }
 
 .trade__title {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 800;
-  letter-spacing: 0.18em;
   text-transform: uppercase;
 }
 
 .trade__expiry {
   margin-left: auto;
-  font-family: var(--mono);
-  font-size: 0.64rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-variant-numeric: tabular-nums;
   color: var(--soil);
 }
 
 .trade__close {
-  border: 0;
-  background: transparent;
   color: var(--paper);
-  font-size: 1.3rem;
+  font-size: var(--t-title);
   line-height: 1;
   cursor: pointer;
   padding: 0 0.25rem;
@@ -785,8 +1392,8 @@
   padding: 0.5rem 0.75rem;
   background: #c62828;
   color: #fff;
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
   text-align: center;
   animation: trade-alert-flash 0.9s ease-in-out 2;
@@ -810,9 +1417,24 @@
 
 .trade__hint {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   color: #6d4738;
+}
+
+/*
+ * The eligibility notice (T-22.03). Set apart from an ordinary hint because it
+ * is the ONLY thing in the panel when it shows — a new player opens the trade
+ * post and this sentence is the whole answer, so it should read as an
+ * explanation rather than as a caption for a control that is not there.
+ */
+.trade__hint--blocked {
+  padding: 0.6rem 0.7rem;
+  line-height: 1.5;
+  color: #7a4a2c;
+  background: #f3e0c8;
+  border: 2px solid #c99a6a;
+  border-radius: 2px;
 }
 
 .trade__invite {
@@ -827,8 +1449,8 @@
   background: var(--paper-raised);
   color: var(--ink);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
 }
 
 .trade__actions {
@@ -838,13 +1460,10 @@
 
 .trade__btn {
   padding: 0.4rem 0.9rem;
-  border: 2px solid var(--ink);
-  background: var(--soil);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -889,8 +1508,6 @@
 }
 
 .trade__side {
-  border: 2px solid var(--ink);
-  background: var(--paper-raised);
   padding: 0.5rem;
   min-width: 0;
 }
@@ -900,16 +1517,15 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-family: var(--mono);
-  font-size: 0.7rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .trade__badge {
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
   color: #6d4738;
   text-transform: none;
@@ -928,8 +1544,8 @@
 
 .trade__empty {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.64rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   color: #6d4738;
 }
 
@@ -947,8 +1563,8 @@
   border: 2px solid var(--ink);
   background: var(--paper);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.64rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
 }
 
 .trade__qty {
@@ -957,8 +1573,8 @@
   border: 2px solid var(--ink);
   background: var(--paper);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-variant-numeric: tabular-nums;
 }
 
@@ -982,8 +1598,8 @@
 }
 
 .traderow__name {
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -994,7 +1610,7 @@
   border: 0;
   background: transparent;
   color: var(--barn);
-  font-size: 1rem;
+  font-size: var(--t-body);
   line-height: 1;
   cursor: pointer;
   padding: 0 0.2rem;
@@ -1018,10 +1634,9 @@
   border: 2px solid var(--paper);
   background: transparent;
   color: var(--paper);
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -1044,8 +1659,8 @@
 }
 
 .historyrow__head {
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
 }
 
@@ -1054,8 +1669,8 @@
   align-items: baseline;
   gap: 0.4rem;
   flex-wrap: wrap;
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   color: #6d4738;
 }
 
@@ -1092,14 +1707,34 @@
   display: none;
 }
 
+/*
+ * The bar and the hotbar step aside for the creator (T-18.22, BUG-15).
+ *
+ * **`visibility`, not `display`.** `hud.barHeight()` measures the bar with
+ * `getBoundingClientRect()` to tell the camera how much viewport the chrome
+ * eats (T-18.03), and `display: none` collapses that box to zero — the farm
+ * would silently refit itself larger underneath the creator and be wrong the
+ * next time `fitCamera` ran. `visibility: hidden` keeps every layout box
+ * exactly where it was and only stops it painting.
+ *
+ * Why hide them at all: the creator is a MANDATORY modal with no close button,
+ * so nothing in the bar applies to a player who is in it — and the overlay's
+ * 82%-opaque scrim was covering the bar anyway, leaving the gold counter and
+ * the Bag button legible enough to look broken but too dim to use. At 1280x720
+ * it was worse than dim: the card's top edge measured 30px against a bar
+ * ending at 58px, a genuine 28px overlap.
+ */
+.hud--creating .hud__rail,
+.hud--creating .hud__status,
+.hud--creating .hotbar {
+  visibility: hidden;
+}
+
 .creator__card {
   /* Wide enough for all seven hair styles on one line — one wrapped swatch
      costs a whole row of height, which is what pushes the clothes row below
      the fold. */
   width: min(820px, 100%);
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 6px 6px 0 rgba(2, 19, 27, 0.5);
 }
 
 .creator__head {
@@ -1110,10 +1745,9 @@
 }
 
 .creator__title {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 800;
-  letter-spacing: 0.18em;
   text-transform: uppercase;
 }
 
@@ -1121,7 +1755,7 @@
   margin: 0;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid rgba(42, 16, 24, 0.25);
-  font-size: 0.72rem;
+  font-size: var(--t-label);
   color: #6d4738;
 }
 
@@ -1140,8 +1774,6 @@
   display: grid;
   place-items: center;
   padding: 0.6rem;
-  background: var(--grass-deep);
-  border: 3px solid var(--ink);
 }
 
 .creator__preview,
@@ -1171,10 +1803,9 @@
 
 .creator__rowlabel {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #6d4738;
 }
@@ -1215,12 +1846,9 @@
 
 .creator__btn {
   padding: 0.45rem 0.9rem;
-  border: 3px solid var(--ink);
-  border-radius: 0;
-  background: var(--paper-raised);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1275,9 +1903,17 @@
   display: flex;
   gap: 2px;
   padding: 4px;
-  /* The strip itself is dark so the slot art reads against any terrain. */
-  background: rgba(5, 42, 58, 0.72);
-  border: 3px solid var(--ink);
+  /*
+   * The strip is a timber PLANK now (Phase U, applied in `ui.css`) — the design
+   * reference's single clearest element, and the pack ships it: `Slots.png`
+   * holds ready-made 8- and 9-slot boards. Those exact boards are still unused,
+   * for the reason `assets.ts` gave, which has not changed — the hotbar is
+   * TWELVE slots, so the board is the frame and the twelve cells sit in it.
+   *
+   * The old `rgba(5, 42, 58, 0.72)` was a translucent navy wash whose job was
+   * "dark so the slot art reads against any terrain". The plank does that job
+   * opaquely and is the pack's own wood.
+   */
   max-width: calc(100vw - 1rem);
   overflow-x: auto;
 }
@@ -1288,17 +1924,10 @@
   width: var(--slot-size);
   height: var(--slot-size);
   padding: 0;
-  border: 0;
-  border-radius: 0;
   cursor: pointer;
   display: grid;
   place-items: center;
-  background-image: var(--slot-sheet);
-  background-size: var(--slot-sheet-size);
-  background-position: var(--slot-idle);
-  background-repeat: no-repeat;
   /* Nearest-neighbour, or an 18px square upscaled 3x turns to mush. */
-  image-rendering: pixelated;
 }
 
 .hotbar__slot.is-selected {
@@ -1319,8 +1948,8 @@
   position: absolute;
   top: 1px;
   left: 3px;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
   line-height: 1;
   /* Same cream-on-outline treatment as the quantity. Ink at low opacity was
@@ -1343,8 +1972,8 @@
   position: absolute;
   right: 2px;
   bottom: 1px;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
   line-height: 1;
   color: var(--paper-raised);
@@ -1376,9 +2005,6 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
 }
 
 .shipping[hidden] {
@@ -1394,20 +2020,17 @@
 }
 
 .shipping__title {
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .shipping__close {
   margin-left: auto;
   padding: 0 0.3rem;
-  border: 0;
-  background: transparent;
   color: inherit;
-  font-size: 1.1rem;
+  font-size: var(--t-num);
   line-height: 1;
   cursor: pointer;
 }
@@ -1415,10 +2038,10 @@
 .shipping__hint {
   margin: 0;
   padding: 0.6rem 0.75rem 0;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   line-height: 1.5;
-  color: #9a7a63;
+  color: var(--faint);
 }
 
 .shipping__section {
@@ -1427,10 +2050,9 @@
 
 .shipping__label {
   margin: 0 0 0.4rem;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: #6d4738;
 }
@@ -1442,9 +2064,9 @@
 
 .shipping__empty {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  color: #9a7a63;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
+  color: var(--faint);
 }
 
 .shiprow {
@@ -1469,14 +2091,14 @@
 }
 
 .shiprow__name {
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
 }
 
 .shiprow__meta {
   margin-left: auto;
-  font-family: var(--mono);
-  font-size: 0.6rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-variant-numeric: tabular-nums;
   color: #6d4738;
 }
@@ -1484,8 +2106,8 @@
 /* The countdown has its own column so rows do not jitter as digits change. */
 .shiprow__clock {
   min-width: 5.5ch;
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1496,19 +2118,16 @@
   border: 2px solid var(--ink);
   background: var(--paper);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.66rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
 }
 
 .shiprow__btn {
   padding: 0.25rem 0.5rem;
-  border: 2px solid var(--ink);
-  background: var(--soil);
   color: var(--ink);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.08em;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   text-transform: uppercase;
   cursor: pointer;
 }
@@ -1546,9 +2165,6 @@
   flex-direction: column;
   gap: 0.7rem;
   padding: 0 0.75rem 0.85rem;
-  background: var(--paper);
-  border: 3px solid var(--ink);
-  box-shadow: 6px 6px 0 rgba(42, 16, 24, 0.35);
 }
 
 .idle__panel[hidden] {
@@ -1566,20 +2182,17 @@
 
 .idle__title {
   flex: 1;
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .idle__close {
   padding: 0 0.35rem;
-  border: 2px solid var(--ink);
-  background: var(--paper-raised);
   color: var(--ink);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--t-body);
   line-height: 1.2;
   cursor: pointer;
 }
@@ -1596,17 +2209,16 @@
   padding: 0.45rem 0.5rem;
   border: 3px solid var(--ink);
   background: var(--paper-raised);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
 }
 
 .idle__hint {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--t-label);
   line-height: 1.4;
   opacity: 0.8;
 }
@@ -1622,10 +2234,9 @@
 
 .idle__legend {
   padding: 0;
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
   font-weight: 700;
-  letter-spacing: 0.12em;
   text-transform: uppercase;
   opacity: 0.7;
 }
@@ -1640,7 +2251,7 @@
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  font-size: 0.72rem;
+  font-size: var(--t-label);
   cursor: pointer;
 }
 
@@ -1650,8 +2261,8 @@
   background: var(--paper-raised);
   color: var(--ink);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
 }
 
 /*
@@ -1668,14 +2279,10 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.4rem 0.5rem 0.4rem 0.9rem;
-  background: var(--grass-deep);
   color: var(--paper-raised);
-  border: 3px solid var(--ink);
-  box-shadow: 4px 4px 0 rgba(42, 16, 24, 0.35);
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
   font-weight: 700;
-  letter-spacing: 0.08em;
 }
 
 .idle__banner[hidden] {
@@ -1684,11 +2291,9 @@
 
 .idle__stop {
   padding: 0.25rem 0.6rem;
-  border: 2px solid var(--ink);
-  background: var(--soil);
   color: var(--ink);
   font: inherit;
-  font-size: 0.62rem;
+  font-size: var(--t-label-sm);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
@@ -1697,4 +2302,626 @@
 .idle__stop:hover {
   background: var(--barn);
   color: var(--paper);
+}
+
+/* ------------------------------------------------------------------ *
+ * The goal board (T-30.09)
+ *
+ * Top LEFT, sharing the column with the decoration tray and the house
+ * controls — which is why the HUD makes the three mutually exclusive rather
+ * than stacking them. The right-hand column is idle mode's, and the centre is
+ * where every modal opens; the left is the only side a panel can stay open on
+ * while the player farms.
+ *
+ * Sized so it never covers the plot rows: `--board-w` is deliberately narrower
+ * than the decoration tray's 216px would suggest, because this one is open by
+ * default and the tray is not.
+ * ------------------------------------------------------------------ */
+
+.board {
+  --board-w: 236px;
+
+  position: absolute;
+  top: 72px;
+  /* Clear of the icon rail (Phase U2) — this was 1rem, i.e. underneath it. */
+  left: var(--rail-clear);
+  width: min(var(--board-w), calc(100vw - var(--rail-clear) - 1rem));
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding: 0 0.7rem 0.7rem;
+  pointer-events: auto;
+}
+
+.board[hidden] {
+  display: none;
+}
+
+/*
+ * Hidden while the character creator is up, for the same reason the bar and
+ * the hotbar are: there is no farm yet, so there is nothing on the board worth
+ * reading, and it would sit over the one panel that must not be dismissible.
+ */
+.hud--creating .board {
+  display: none;
+}
+
+.board__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 -0.7rem 0.6rem;
+  padding: 0.55rem 0.7rem;
+  /* Frame and colour: `ui.css`, the timber board. */
+}
+
+.board__title {
+  flex: 1;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+/*
+ * The tab strip (T-33.07).
+ *
+ * It replaces the static "Goals" heading rather than sitting under it: the
+ * board is a narrow left-hand column that must fit 390x844 above the hotbar, and
+ * a heading plus a tab row spends two lines saying what one line says. The
+ * active tab IS the title.
+ */
+.board__tabs {
+  flex: 1;
+  display: flex;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.board__tab {
+  flex: none;
+  padding: 0.2rem 0.5rem;
+  border: 2px solid transparent;
+  background: none;
+  /*
+   * Cream, not ink — the board's header is the timber plank now (Phase U), and
+   * dark text at 55% on dark timber is an invisible tab. Reversing the
+   * direction keeps the original intent, which the comment below still states.
+   */
+  color: var(--paper);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+  /* Half-strength rather than a lighter colour, so the contrast ratio the
+     `contrast.test.ts` axe pass pins is not quietly reduced. */
+  opacity: 0.62;
+}
+
+.board__tab.is-active {
+  opacity: 1;
+  border-color: var(--paper);
+  background: var(--soil);
+  color: var(--ink);
+}
+
+.board__tab:focus-visible {
+  outline: 2px solid var(--gilt, #ae4924);
+  outline-offset: 2px;
+}
+
+/*
+ * The "today" marker on a rotating request.
+ *
+ * Carries an `aria-label` in the markup as well, because a coloured chip is not
+ * information to a screen reader — the same rule the level bar follows.
+ */
+.goalrow__tag {
+  display: inline-block;
+  padding: 0 0.3rem;
+  color: var(--paper);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.board__close {
+  padding: 0 0.35rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-body);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.board__close:hover {
+  background: var(--barn);
+  color: var(--paper);
+}
+
+.board__list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.board__empty {
+  margin: 0;
+  font-size: var(--t-body-sm);
+  line-height: 1.4;
+  color: #6d4738;
+}
+
+.goalrow {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem;
+}
+
+/*
+ * An earned goal is the one thing on this panel worth crossing the room for,
+ * so it gets the plate colour the bar's buttons use rather than a tint of the
+ * paper it sits on.
+ */
+.goalrow.is-claimable {
+  background: var(--soil);
+}
+
+.goalrow__title {
+  margin: 0;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.goalrow__hint {
+  margin: 0;
+  font-size: var(--t-label);
+  line-height: 1.35;
+}
+
+.goalrow__bar {
+  height: 10px;
+  overflow: hidden;
+}
+
+.goalrow__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  /* The same green as the level bar's fill and the XP float's tint: one colour
+     for "you are getting somewhere", wherever it appears (T-30.03). */
+  background: var(--grass-deep);
+  transition: width 220ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goalrow__fill {
+    transition: none;
+  }
+}
+
+.goalrow__meta {
+  margin: 0;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+
+/* On the rust plate `--faint` is no longer quiet text on paper. */
+.goalrow.is-claimable .goalrow__meta {
+  color: var(--ink);
+}
+
+.goalrow__claim {
+  justify-self: start;
+  margin-top: 0.15rem;
+  padding: 0.3rem 0.7rem;
+  color: var(--paper);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.goalrow__claim:hover:not(:disabled) {
+  background: var(--soil-deep);
+}
+
+.goalrow__claim:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/*
+ * A phone is 390px wide and the board is open by default, so it must not be a
+ * wall across the farm. It keeps its place and gives up width; the touch
+ * controls own the bottom of the screen (T-28.02), which is why the height cap
+ * is tighter here than the desktop one.
+ */
+@media (max-width: 700px) {
+  .board {
+    --board-w: 200px;
+    max-height: calc(100vh - 260px);
+  }
+
+  .goalrow__hint {
+    font-size: var(--t-label);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Farm decoration tray (T-15.24)
+ *
+ * A short list, not a grid: it holds what you own and have not put down, and
+ * arming a piece is the only thing it does — WHERE the piece goes is decided
+ * by the character's faced tile out on the farm, not in here.
+ * ------------------------------------------------------------------ */
+
+.hud__decortitle {
+  margin: 0 0 0.5rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.hud__decorempty {
+  margin: 0;
+  font-size: var(--t-body-sm);
+  line-height: 1.4;
+  color: #6d4738;
+}
+
+.decorrow[aria-pressed='true'] {
+  /* The armed piece has to be obvious from the farm, where the player is
+     actually looking — a subtle highlight is no use two metres away. */
+  background: var(--soil);
+  border-color: var(--ink);
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------------ *
+ * Compact chrome on short viewports (T-18.03)
+ *
+ * The camera reserves the HUD bar AND the hotbar, then fits the farm in what
+ * is left. On a 1366x768 laptop the full-size chrome is 151px — a fifth of the
+ * viewport — which left 617px for a farm that needs 640px at zoom 2, so the
+ * fit dropped to zoom 1 and rendered the game at native size in the middle of
+ * the screen. Twenty-three pixels of padding were costing an entire zoom
+ * level.
+ *
+ * So the chrome gets smaller exactly where the screen is. 820px is chosen so a
+ * 900-tall laptop and a 1080p desktop — both of which already clear zoom 2 —
+ * keep the full-size HUD, and only the viewports that would otherwise fall to
+ * zoom 1 pay for it.
+ *
+ * The hotbar slot goes 54px to 36px, which is 18px art at 2x instead of 3x —
+ * a whole-number step, so the pixel art stays sharp. Any fractional shrink
+ * here would defeat `image-rendering: pixelated` and is not worth the pixels.
+ * ------------------------------------------------------------------ */
+
+@media (max-height: 820px) {
+  .hud__status {
+    padding: 0.3rem 0.5rem;
+    gap: 0.45rem;
+  }
+
+  /* Nine 44px buttons is 400px of rail; a short viewport cannot spare it. */
+  .hud__rail {
+    gap: 0.25rem;
+  }
+
+  /*
+   * The button shrinks by its OWN token, and the rail's width token follows it.
+   * Setting width/height on the button directly would leave --rail-clear
+   * saying 2.75rem, and the goal board would sit half an icon further right
+   * than it needs to.
+   */
+  .hud {
+    --rail-btn: 2.25rem;
+  }
+
+  .hud__gold {
+    padding: 0.2rem 0.5rem;
+    font-size: var(--t-label);
+  }
+
+  /*
+   * This block is `max-height`, not `max-width` — it buys the camera rows back
+   * on a SHORT viewport (T-18.03), which is why 1280x720 gets the trim and a
+   * 390x844 phone does not. Measured: 70px of track at 720 tall, 102px at 844.
+   * 64px still reads as a bar, and the pip keeps the number that matters.
+   */
+  .hud__level {
+    padding: 0.2rem 0.4rem;
+    font-size: var(--t-label);
+  }
+
+  .hud__xpbar {
+    width: 64px;
+  }
+
+  /*
+   * Bar buttons shrink by dropping the plate to 1x rather than by restyling:
+   * the frame, the press and the colour all still come from `ui.css`, and only
+   * the scale changes. A compact button is the same button, smaller.
+   */
+  .hud__btn {
+    --ui-scale-plate: 1;
+
+    font-size: var(--t-label-sm);
+  }
+
+  /* The slot SIZE is not here: `--slot-size`, the sheet size and both
+     background offsets are multi-value and measured together, so `hotbar.ts`
+     rewrites them all at `SLOT_SCALE_COMPACT` rather than CSS guessing at a
+     fraction of them. Only the strip's own box shrinks here. */
+  .hotbar {
+    bottom: 0.5rem;
+    padding: 3px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Touch controls (T-28.02, D-19)
+ * ------------------------------------------------------------------ */
+
+/*
+ * Shown only where a finger is the primary pointer — the same query that used
+ * to show "Tillhaven needs a keyboard", so exactly the devices that were told
+ * they could not play get the controls instead, and the two can never both be
+ * on screen.
+ *
+ * The element is only CONSTRUCTED on those devices as well (`TouchControls.
+ * wanted`), so this rule is belt and braces rather than the only gate: a
+ * desktop that somehow ended up with the markup still shows nothing.
+ */
+.touch {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .touch {
+    display: block;
+    position: fixed;
+    inset: auto 0 0 0;
+    height: 0;
+    z-index: 5;
+    /* The bar itself must not eat taps meant for the canvas; only the two
+       controls inside it do. */
+    pointer-events: none;
+  }
+
+  .touch__stick,
+  .touch__act {
+    position: absolute;
+    bottom: 6.5rem;
+    pointer-events: auto;
+    /* A thumb dragged across a control must drive it, not scroll the page or
+       fire the browser's own long-press and double-tap gestures. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .touch__stick {
+    left: 1.2rem;
+    width: 8.5rem;
+    height: 8.5rem;
+    border: 3px solid var(--ink);
+    border-radius: 50%;
+    background: rgba(247, 219, 198, 0.42);
+  }
+
+  .touch__knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 3.4rem;
+    height: 3.4rem;
+    margin: -1.7rem 0 0 -1.7rem;
+    border: 3px solid var(--ink);
+    border-radius: 50%;
+    background: var(--barn);
+    /* Follows the finger every frame, so no transition — an eased knob lags
+       behind the thumb and reads as input lag rather than as smoothing. */
+  }
+
+  .touch__act {
+    right: 1.2rem;
+    width: 5.4rem;
+    height: 5.4rem;
+    color: var(--paper);
+    font-family: var(--pixel-label);
+    font-size: var(--t-title);
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .touch__act:active {
+    background: var(--soil-deep);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * The backpack on a narrow screen (T-29.01, BUG-29)
+ * ------------------------------------------------------------------ */
+
+/*
+ * **Twelve fixed columns do not fit a phone, and the overflow was not
+ * reachable.** Measured at 390x844: `.pack` is `width: max-content` capped by
+ * `max-width: calc(100vw - 2rem)`, so the grid asked for 12 x 54px + gaps and
+ * got 358px. Twelve slots ended up at x 359-525 — outside the panel AND outside
+ * the viewport — and the panel's `scrollWidth` equalled its `clientWidth`, so
+ * there was nothing to scroll to reach them. On a VIP's 24-slot bag that is
+ * half the inventory, silently gone.
+ *
+ * The grid reflows instead of scrolling. Horizontal scroll inside a container
+ * whose whole purpose is drag-and-drop is a fight between two gestures, and on
+ * touch the drag would win about half the time.
+ *
+ * **What the twelve columns bought is kept.** The comment above says the top
+ * row is exactly the hotbar so the marked row matches the strip on screen. That
+ * is a nice property and it is preserved wherever twelve columns fit; where
+ * they do not, `.slot.is-hotbar` still draws its gilt underline on every hotbar
+ * slot individually, so which slots they are stays visible — the row just is
+ * not one row any more. The panel's hint says so in words rather than naming a
+ * row that may not exist.
+ */
+@media (max-width: 900px) {
+  .pack {
+    /* `max-content` would keep asking for twelve columns; the grid can only
+       reflow inside a container that is allowed to be narrower than its
+       content wants to be. */
+    width: calc(100vw - 2rem);
+  }
+
+  .pack__grid {
+    grid-template-columns: repeat(auto-fill, var(--slot-size, 54px));
+    justify-content: center;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * The dialogue box (T-33.01)
+ * ------------------------------------------------------------------ */
+
+/*
+ * **Drawn in CSS from the pack's own colours, not sliced from its art** — the
+ * same call `--btn-lift` above records for the button plate, and for the same
+ * reason. `UI/dialogue box.png` is a 144x96 sheet holding two frames and a
+ * dozen speech bubbles, and the frame this wants is a 48x48 region at (0,48).
+ * `border-image` slices from the SOURCE IMAGE's outer edges, so a 5px slice of
+ * that sheet takes pixels from four unrelated corners; using it properly means
+ * cropping it into its own file, and `prepare-assets.mjs` is a pure copier by
+ * design.
+ *
+ * The three colours below are measured out of that frame rather than picked to
+ * match it: #FFD2A1 fill (2,058 px), #1C0A18 border (188 px), #D9884C inner
+ * shade (54 px). If somebody does crop the art later, the box will already be
+ * the right colour.
+ *
+ * (The honest alternative is nine `background-position` layers of the sheet,
+ * which is a real 9-slice of a sub-region. It is more faithful and much fiddlier;
+ * noted here so the next person does not have to rediscover that it is possible.)
+ */
+.dialogue {
+  --dlg-edge: #1c0a18;
+
+  position: absolute;
+  /*
+   * Above the hotbar rather than centred. A conversation is something the
+   * player is having WITH the world, so covering the world with it is the wrong
+   * read — and the hotbar is the one strip that must never be hidden, because
+   * the tool in hand is what the next press does.
+   */
+  left: 50%;
+  /*
+   * Clear of the hotbar, derived from the hotbar's own numbers rather than a
+   * guessed constant: it sits at `bottom: 0.75rem` and is `--slot-size` tall
+   * plus 8px padding and 6px of border. `--slot-size` is written onto the HUD
+   * root by `hotbar.ts` from `UI_SLOT.size`, so re-measuring the slot art moves
+   * this box with it.
+   */
+  bottom: calc(0.75rem + var(--slot-size, 54px) + 14px + 0.75rem);
+  transform: translateX(-50%);
+  /*
+   * `100vw - 2rem` is what makes the 390px case work: at 390 the box is 358px
+   * wide, which is the width `DIALOGUE_MAX_LINE` was measured against.
+   */
+  width: min(46rem, 100vw - 2rem);
+  box-sizing: border-box;
+  padding: 1.1rem 1.5rem 0.9rem;
+
+  /*
+   * The frame itself is `ui-dialogue.png` now (Phase U, applied in `ui.css`) —
+   * the pack's actual scalloped box, nine-sliced with `border-image-repeat:
+   * round` so the scallops keep their rhythm at any width. `--dlg-fill` and
+   * `--dlg-shade` are gone with the CSS box that used them; the art carries
+   * both.
+   */
+  color: var(--dlg-edge);
+}
+
+.dialogue[hidden] {
+  display: none;
+}
+
+/*
+ * The coach hint stands down while somebody is talking.
+ *
+ * Found in the browser, not in a test: the strip lives at `bottom: 4.6rem` and
+ * the box lands on top of it, so "Walk with WASD. Face a plot and press E…"
+ * was printed across the bottom edge of the merchant's first line. Two pieces
+ * of instructional text arguing over the same 40 pixels, one of which is
+ * telling the player to press the key they are already pressing.
+ *
+ * `visibility`, not `display` or `hidden` — the strip retires itself on the
+ * first harvest and `hud.ts` owns that decision through `coachEl.hidden`.
+ * Taking it out of the layout here would mean two owners of one element's
+ * visibility, which is exactly the collision BUG-24 was (`hudHidden.test.ts`).
+ * This only ever suppresses PAINT, for as long as the conversation lasts.
+ */
+.hud:has(.dialogue:not([hidden])) .hud__coach {
+  visibility: hidden;
+}
+
+.dialogue:focus-visible {
+  /* It takes focus on open (see `DialoguePanel.show`), and a 3px dark ring on a
+     3px dark border is invisible — so the ring goes OUTSIDE, in the gilt. */
+  outline: 2px solid var(--gilt, #ae4924);
+  outline-offset: 3px;
+}
+
+.dialogue__speaker {
+  margin: 0 0 0.35rem;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--barn);
+}
+
+.dialogue__text {
+  margin: 0;
+  font-family: var(--pixel-label);
+  /*
+   * 0.82rem monospace is what `DIALOGUE_MAX_LINE = 120` was MEASURED against,
+   * in the running game at 390x844: ~40 characters per row inside a 358px box,
+   * three rows. Changing this size without re-measuring that constant makes the
+   * config test lie about what fits.
+   */
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  /* Three rows at 1.5 line-height, reserved whether or not they are used, so
+     the box does not jump height between a one-line beat and a three-line one —
+     which on a phone moves the hint out from under the thumb mid-conversation.
+     `DIALOGUE_MAX_LINE` is what keeps a line from needing a fourth. */
+  min-height: calc(3 * 1.5 * 0.82rem);
+}
+
+.dialogue__hint {
+  margin: 0.5rem 0 0;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
+  text-transform: uppercase;
+  text-align: right;
+  opacity: 0.68;
+}
+
+@media (max-width: 480px) {
+  .dialogue {
+    padding: 0.85rem 1rem 0.7rem;
+  }
 }

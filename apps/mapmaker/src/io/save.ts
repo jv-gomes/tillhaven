@@ -6,6 +6,7 @@
  * while the download always works and is the fallback if the endpoint is gone.
  */
 
+import type { GroundAnimation } from '@tillhaven/shared/config';
 import type { MapDoc } from '../model/doc.js';
 import type { TerrainSet } from '../tilesets/terrain.js';
 import { serialize } from './tiled.js';
@@ -45,6 +46,38 @@ export async function saveTerrainSets(sets: readonly TerrainSet[]): Promise<Save
       return { ok: false, message: body.error ?? `HTTP ${res.status}` };
     }
     return { ok: true, message: 'Saved src/tilesets/terrain-sets.json' };
+  } catch (err) {
+    return { ok: false, message: `Save failed: ${String(err)}` };
+  }
+}
+
+/**
+ * Writes the authored animation library into shared config.
+ *
+ * Unlike the map and the terrain sets, saving this changes a file the GAME
+ * imports — so the failure is reported in full rather than as "save failed".
+ * The endpoint refuses the whole library if any entry is malformed (it is
+ * emitting TypeScript), and knowing which entry is the difference between a
+ * fixable mistake and a panel that will not save for no visible reason.
+ */
+export async function saveGroundAnimations(
+  animations: readonly GroundAnimation[],
+): Promise<SaveResult> {
+  try {
+    const res = await fetch('/__save-ground-anim', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(animations),
+    });
+    if (!res.ok) {
+      const body = (await res.json()) as { error?: string; problems?: string[] };
+      const detail = body.problems?.length ? `: ${body.problems.join('; ')}` : '';
+      return { ok: false, message: `${body.error ?? `HTTP ${res.status}`}${detail}` };
+    }
+    return {
+      ok: true,
+      message: 'Saved packages/shared/src/config/groundAnim.generated.ts — reload the game to see it',
+    };
   } catch (err) {
     return { ok: false, message: `Save failed: ${String(err)}` };
   }

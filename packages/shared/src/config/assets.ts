@@ -41,7 +41,7 @@ export interface ImageSpec {
  * Tileset — new pack (T-7.04)
  *
  * Unlike the old pack's single cropped/keyed sheet, these copy straight out
- * of `new_assets/Tileset/` with no transform (T-7.02) — clean transparent
+ * of `assets/Tileset/` with no transform (T-7.02) — clean transparent
  * PNG, uniform 16x16 grid, verified by grid-overlay inspection rather than
  * assumed from file size. T-7.05 groups these into `TILESET_RUNS`-backed
  * autotile sets for the mapmaker; this block is geometry only.
@@ -59,6 +59,28 @@ export const TILESET_GRASS_SPRING: SheetSpec = {
   note: 'Spring grass autotile blocks. Confirmed 16x16 by grid-overlay inspection — see T-7.04 write-up.',
 };
 
+/**
+ * Tilled and wet soil, as **self-contained rounded clod stamps** — NOT an
+ * autotile set.
+ *
+ * The note here used to say "autotile blocks", and that sentence cost real
+ * time twice. T-7.05 disproved it once; the wording survived, and the field was
+ * later hand-painted with a 3x3 nine-slice out of cols 1-3 — which is exactly
+ * what you would do if the description were true.
+ *
+ * **Measured, not argued.** Every cell carries the dark `#9d4c46`/`#6e3539`
+ * outline on at least one edge, and the supposed centre tile (row 1, col 2) has
+ * two outline pixels in each of its four corners. Butt four of those together
+ * and the eight corner pixels meet at the junction, so a tiled field shows a
+ * dark dot at every 16px intersection: all 31 internal seams of that 5x4
+ * arrangement carried outline pixels. Two further checks agree — 14 distinct
+ * quadrant images per corner position where a real set has about five, and
+ * exactly one tile in 48 with all four edges flush.
+ *
+ * The sheet is fine for what it is: six rounded 64x64 patch stamps per band,
+ * for the mapmaker's stamp tool. It cannot supply edges. Runtime soil is
+ * `GROUND_SOIL_TILES` below, synthesised precisely because this cannot do it.
+ */
 export const TILESET_SOIL: SheetSpec = {
   key: 'tileset-soil',
   path: `${ASSET_BASE}/tileset-soil.png`,
@@ -68,7 +90,7 @@ export const TILESET_SOIL: SheetSpec = {
   frameHeight: 16,
   cols: 24,
   rows: 8,
-  note: 'Tilled and wet-soil autotile blocks (D-1 / §5.2 watering model).',
+  note: 'Rounded soil PATCH STAMPS, not autotile blocks — see the comment above.',
 };
 
 export const TILESET_GRASS_WATER_SPRING: SheetSpec = {
@@ -104,6 +126,40 @@ export const TILESET_PATHS: SheetSpec = {
   rows: 16,
 };
 
+/**
+ * Every season's ground props in horizontal bands (T-18.09).
+ *
+ * The farm's `decor` tile layer had been empty since the map was authored, and
+ * the reason is in the note below `GROUND_GRASS`: `TILESET_GRASS_SPRING` holds
+ * rounded autotile patches, never loose scatter. Measured here rather than
+ * assumed — every one of its 264 cells was profiled for alpha coverage and
+ * bounding box, and the spring tufts (row 0) and stones (row 6) are the only
+ * bands that are both self-contained and FLAT.
+ *
+ * **Flat is the whole constraint.** The decor layer draws at `DEPTH.decor`,
+ * below every world sprite, so anything with height put here is drawn behind
+ * the player from every angle including in front of it. The sheet's standing
+ * flowers, mushrooms and driftwood are therefore deliberately unused: they
+ * would have to be `DecorPiece`s sorting on their own feet. `GROUND_SCATTER`
+ * in `farmLayout.ts` is the list that was actually picked, with the reasoning.
+ *
+ * Appended at the END of `SHEETS` on purpose. `TILESET_RUNS` allocates
+ * `firstgid` by walking `SHEETS` then `IMAGES` in declared order, so inserting
+ * anywhere else renumbers every tileset after it — the failure that made maple
+ * trees render as milk bottles in T-7.09 and the shipping box vanish in T-8.03.
+ */
+export const TILESET_PROPS_SEASONS: SheetSpec = {
+  key: 'tileset-props-seasons',
+  path: `${ASSET_BASE}/tileset-props-seasons.png`,
+  width: 352,
+  height: 192,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 22,
+  rows: 12,
+  note: 'Seasonal ground props. Only the flat spring tufts and stones are used — see GROUND_SCATTER.',
+};
+
 /** A single flat water fill tile — already exactly what T-7.05 needed to
  *  synthesize for grass/soil/path (see `GROUND_*` below): a plain colour,
  *  no border, tiles edge-to-edge with itself perfectly by construction. */
@@ -114,56 +170,140 @@ export const WATER_TILE: ImageSpec = {
   height: 16,
 };
 
+/* ------------------------------------------------------------------ *
+ * Ground, painted from the pack (MVP re-scope)
+ *
+ * **This replaces five first-party tiles, and the reason is a measurement
+ * that changed.** T-7.05 examined the pack's tilesets, found *"only
+ * self-contained rounded patches — never art that fills its cell edge to
+ * edge"*, and had the game draw its own flat ground instead
+ * (`scripts/draw-ground-tiles.py` → `original-assets/ground/`). That was
+ * measured on the INCOMPLETE copy of the pack. The complete one has whole
+ * fully-opaque bands and pure single-colour fills, so the ground comes from
+ * the pack and the stand-ins are gone.
+ *
+ * Every frame number below is measured — `node scripts/measure-terrain.mjs`,
+ * recorded in `docs/art-measurements.md`. Nothing here is a guess about a
+ * layout, which is what the deleted comment turned out to be.
+ * ------------------------------------------------------------------ */
+
 /**
- * Flat ground-fill tiles, original work (T-7.05) — `scripts/draw-ground-tiles.py`
- * draws these from colours sampled out of the pack's own patch art, tracked
- * in `original-assets/ground/` and copied in by `prepare-assets.mjs` like
- * everything else.
+ * The farm's base ground: the flat light-grass tile in `TILESET_GRASS_SPRING`.
  *
- * Why they exist: `TILESET_GRASS_SPRING`, `TILESET_SOIL` and `TILESET_PATHS`
- * turned out to hold only self-contained rounded patches / framed rug
- * pieces (verified by grid-overlay and connected-component inspection, see
- * the T-7.05 write-up in ROADMAP.md) — never art that fills its cell edge to
- * edge. Tiling a patch repeatedly leaves visible gaps between its rounded
- * borders. `WATER_TILE` above is the one surface the pack already ships as
- * a flat fill, which is what confirmed a flat tile is the right answer for
- * the other three, not a guess.
- *
- * The mapmaker paints these as ordinary single-tile terrain sets (`roles: {
- * c: 0 }` in `DEFAULT_TERRAIN_SETS`); the rounded patch art becomes
- * decoration stamped on top via the existing stamp tool, never the base fill.
+ * `#79bf56`, fully opaque and a single colour, at tile (9,2). That is exactly
+ * the colour the hand-drawn `ground-grass.png` was sampled as — the stand-in
+ * was taken from this sheet in the first place, which is a useful check that
+ * this is the right tile rather than merely a green one.
  */
-export const GROUND_GRASS: ImageSpec = {
-  key: 'ground-grass',
-  path: `${ASSET_BASE}/ground-grass.png`,
-  width: 16,
-  height: 16,
-  note: 'Sampled from Tileset Grass Spring.png, #79bf56.',
+export const GRASS_FILL_FRAME = 57 as const;
+
+/**
+ * The tillable field, before a hoe touches it.
+ *
+ * The orange band of `TILESET_GRASS_SPRING` — rows 8-15, the sheet's only
+ * fully-opaque *coloured* band — with its flat fill at tile (9,14), `#ee9d51`.
+ * Drawn under the plots so a plantable tile reads as plantable before it is
+ * tilled, rather than being grass that happens to accept a hoe.
+ */
+export const TILLABLE_FILL_FRAME = 345 as const;
+
+/**
+ * The path's flat fill, in `TILESET_PATHS` — `#9e8d70`, tile (9,2).
+ *
+ * **The same tile position as the grass fill**, which is not a coincidence:
+ * the pack lays every 12-column terrain block out identically and puts the
+ * centre fill at (9,2). Worth knowing before measuring the next one.
+ */
+export const PATH_FILL_FRAME = 57 as const;
+
+/** Frames per state: one for each value of the 4-bit neighbour mask. */
+export const SOIL_TILE_MASKS = 16 as const;
+
+/**
+ * Tilled soil, by neighbour mask, straight out of `TILESET_SOIL`
+ * (`Tilled Soil and wet soil.png`).
+ *
+ * **The pack ships a complete 4x4 wang set** at cols 0-3, rows 0-3 — all
+ * sixteen masks, no gaps — and the wet set is the identical layout twelve
+ * columns to the right. So the whole edge system is the pack's own art, where
+ * before it was sixteen frames generated by a Python script because the
+ * incomplete pack appeared not to have them.
+ *
+ * Index is the mask, bit order `N E S W` (bit 3 = north), matching
+ * `soilMask` in `plots.ts`. The mask is over "is tilled", NOT "is tilled and
+ * equally wet", so a watered plot inside a dry field is a colour change with
+ * no rim: the soil is continuous, the wetness is not.
+ */
+export const SOIL_DRY_FRAMES: readonly number[] = [
+  72, 75, 0, 3, 73, 74, 1, 2, 48, 51, 24, 27, 49, 50, 25, 26,
+];
+
+/**
+ * The wet set — **brown, not the pack's blue**.
+ *
+ * `Tilled Soil and wet soil.png` holds four blocks: brown `#be6d47` and dark
+ * brown `#9d4c46` side by side, and a blue-violet pair below them. The blue is
+ * the pack's own "wet soil" and it is **not used**: T-15.29 tried exactly that
+ * colour and found it *"read as shallow water on a watered plot"*, and
+ * hand-darkened the dry soil instead. The pack's darker brown is the same
+ * answer its artist reached, so the hand-drawn tile is no longer needed.
+ *
+ * Same layout as dry, shifted twelve columns right.
+ */
+export const SOIL_WET_FRAMES: readonly number[] = [
+  84, 87, 12, 15, 85, 86, 13, 14, 60, 63, 36, 39, 61, 62, 37, 38,
+];
+
+/**
+ * Animated water, for the backdrop the map floats on.
+ *
+ * Four frames stacked four rows apart, each with a flat `#0092dd` fill — the
+ * same colour as `WATER_TILE`, so a still tile and an animated one cannot
+ * disagree about what water looks like.
+ */
+export const TILESET_WATER_ANIM: SheetSpec = {
+  key: 'tileset-water-anim',
+  path: `${ASSET_BASE}/tileset-water-anim.png`,
+  width: 384,
+  height: 256,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 24,
+  rows: 16,
+  note: 'Water Ground animations tiles.png — 4 frames of 4 rows each.',
 };
 
-export const GROUND_SOIL_DRY: ImageSpec = {
-  key: 'ground-soil-dry',
-  path: `${ASSET_BASE}/ground-soil-dry.png`,
-  width: 16,
-  height: 16,
-  note: 'Sampled from Tilled Soil and wet soil.png (dry band), #be6d47.',
-};
+/**
+ * The four frames of one tile of **open water**, in order.
+ *
+ * **Not the sheet's flat fill, and that mistake is worth recording.** The
+ * obvious pick was the flat `#0092dd` cell at (21,2) — the same tile
+ * `WATER_TILE` is. But comparing each cell against its counterpart in the
+ * other three blocks shows 92 cells animate and **the flat fill is not one of
+ * them**: it is a solid colour in all four frames. Animating it renders four
+ * identical images, which is exactly as still as not animating at all.
+ *
+ * This is cell (18,1) — open water with a moving sparkle, fully opaque and
+ * only six colours, so it repeats across a whole screen without reading as a
+ * pattern.
+ */
+export const WATER_ANIM_FRAMES: readonly number[] = [42, 138, 234, 330];
 
-export const GROUND_SOIL_WET: ImageSpec = {
-  key: 'ground-soil-wet',
-  path: `${ASSET_BASE}/ground-soil-wet.png`,
-  width: 16,
-  height: 16,
-  note: 'Sampled from Tilled Soil and wet soil.png (wet band), #767ede.',
-};
+/** How fast the water loops. Slow: this is a backdrop, not a focal point. */
+export const WATER_ANIM_FPS = 4 as const;
 
-export const GROUND_PATH: ImageSpec = {
-  key: 'ground-path',
-  path: `${ASSET_BASE}/ground-path.png`,
-  width: 16,
-  height: 16,
-  note: 'Sampled from Path tiles.png dominant terracotta brick fill, #662623.',
-};
+/*
+ * **`Tileset Grass Cliff Tileset Spring.png` is deliberately NOT here.**
+ *
+ * It was added with the water and then removed the same day. Its art is the
+ * transition from a grass top to a cliff FACE — it edges a change in height,
+ * and the farm is flat, so there is nothing for it to edge. Measured, it also
+ * carries the same two grass tones and the same flat fill position as
+ * `TILESET_GRASS_SPRING`, so it adds no ground the farm does not already have.
+ *
+ * Listing it would have shipped it inert, which is the one thing this
+ * roadmap's own rule forbids. It comes back the day the map gains elevation.
+ */
 
 /* ------------------------------------------------------------------ *
  * Characters and animals
@@ -177,7 +317,7 @@ export const GROUND_PATH: ImageSpec = {
 
 /**
  * Layered character strips from the new pack
- * (`new_assets/Character/Character/PNG/<folder>/<layer>/<variant>.png`).
+ * (`assets/Character/Character/PNG/<folder>/<layer>/<variant>.png`).
  *
  * These are **not** in `SHEETS` — unlike every other sheet, a character strip
  * is not one fixed asset: it is picked per-player from four layers (skin,
@@ -264,7 +404,7 @@ export type CharDirection = (typeof CHAR_DIRECTION_ORDER)[number];
 export interface CharAnimSpec {
   /** Segment used under `public/assets/character/<key>/...` (see T-7.02). */
   readonly key: string;
-  /** Folder name under `new_assets/Character/Character/PNG/`. */
+  /** Folder name under `assets/Character/Character/PNG/`. */
   readonly sourceFolder: string;
   /** Frames per direction block (4 blocks total, see `CHAR_DIRECTION_ORDER`). */
   readonly framesPerDirection: number;
@@ -277,11 +417,18 @@ export interface CharAnimSpec {
 }
 
 /**
- * The 5 MVP animations. Frame counts and strip widths measured directly from
+ * The 8 MVP animations. Frame counts and strip widths measured directly from
  * the source PNGs (`identify`); do not guess if art is re-exported — a wrong
  * `framesPerDirection` here misaligns the whole strip and desyncs directions
  * that the config test cannot catch by width alone if the miscount and the
  * strip width are wrong together, so read this from the art, not the total.
+ *
+ * `plant`, `harvest` and `pet` joined in T-16.02. Until then `swingForKind`
+ * returned null for planting and harvesting and animal actions swung nothing
+ * at all, because the only strips wired were hoe and watering — the pack ships
+ * ~45 animation folders and five had ever been looked at. All three were
+ * measured the same way as the originals, and every layer file inside each
+ * folder was confirmed to share one size before any number here was written.
  */
 export const CHAR_ANIMS = {
   idle: {
@@ -322,6 +469,66 @@ export const CHAR_ANIMS = {
     framesPerDirection: 8,
     width: 1024,
     fps: 10,
+    loop: false,
+  },
+  /*
+   * Chopping (T-20.04). `5. Axe and Sickle`, WITH its `Weapons/Axe` overlay —
+   * unlike `plant` below, the player really is holding the thing.
+   *
+   * Measured, not copied from `hoe`: every layer file in the folder is 768x32,
+   * which is 24 frames over four directions, six per direction — the same
+   * geometry the hoe happens to have. `fps: 10` matches the other two tool
+   * swings so a chop reads as the same class of action.
+   */
+  axe: {
+    key: 'axe',
+    sourceFolder: '5. Axe and Sickle',
+    framesPerDirection: 6,
+    width: 768,
+    fps: 10,
+    loop: false,
+  },
+  /*
+   * Planting (T-16.02). The pack has no "plant a seed" animation; `6. Shovel`
+   * is the crouch-lean-rise that reads as putting something into the ground,
+   * and it is used WITHOUT its `Weapons/Shovel` overlay on purpose — see
+   * `TOOL_ANIMS`. Body only, so the character's hands stay empty and no
+   * item the player does not own appears on screen.
+   */
+  plant: {
+    key: 'plant',
+    sourceFolder: '6. Shovel',
+    framesPerDirection: 5,
+    width: 640,
+    fps: 9,
+    loop: false,
+  },
+  /*
+   * Harvesting. `13.3 Carrying - Pick Up` is bend, take, straighten, hold —
+   * which is what harvesting by empty hand (§5.2) actually looks like. It has
+   * no weapon folder at all, so there is nothing to suppress.
+   */
+  harvest: {
+    key: 'harvest',
+    sourceFolder: '13.3 Carrying - Pick Up',
+    framesPerDirection: 4,
+    width: 512,
+    fps: 8,
+    loop: false,
+  },
+  /*
+   * Collecting from and feeding an animal. `20. Petting` is a kneel and a
+   * reach — three frames, the shortest strip in the game, so `fps` is set low
+   * enough that `charAnimDurationMs` yields a swing long enough to read as a
+   * deliberate action rather than a twitch. That is the whole reason the
+   * number is 6 and not the 10 the two tool anims use.
+   */
+  pet: {
+    key: 'pet',
+    sourceFolder: '20. Petting',
+    framesPerDirection: 3,
+    width: 384,
+    fps: 6,
     loop: false,
   },
 } as const satisfies Record<string, CharAnimSpec>;
@@ -409,8 +616,16 @@ export function charLayerPaths(anim: CharAnimKey, appearance: Appearance): strin
  * this task finally draws them. Verified against the art — each tool strip is
  * pixel-for-pixel the same geometry as its animation's character strips
  * (hoe 768×32, watering 1024×32), so it needs no separate frame maths.
+ *
+ * **`plant` is the deliberate exception, and it stays out (T-16.02).** Its
+ * source folder `6. Shovel` DOES ship a `Weapons/Shovel` strip of matching
+ * geometry, so adding it here would work. It must not be added: there is no
+ * shovel item, tools in this game are items you own and equip (§5.2), and the
+ * hand holding a seed packet would sprout an implement that is in nobody's
+ * backpack. `harvest` and `pet` have no weapon folder at all, so the rule is
+ * only ever tempting for `plant` — which is exactly why it is written down.
  */
-export const TOOL_ANIMS = ['hoe', 'watering'] as const satisfies readonly CharAnimKey[];
+export const TOOL_ANIMS = ['hoe', 'watering', 'axe'] as const satisfies readonly CharAnimKey[];
 export type ToolAnim = (typeof TOOL_ANIMS)[number];
 
 /**
@@ -659,6 +874,53 @@ export const ANIMAL_COW_FEMALE_BROWN = requireAnimalSheet('animal-cow-brown-fema
 export const ANIMAL_CHICKEN_IDLE_ROW = 0 as const;
 
 /**
+ * Chicken pose rows, named (T-15.10).
+ *
+ * T-7.10 described these rows; this names them so `poseRowFor` can select one
+ * without a caller writing `3` and hoping. The semantics are T-7.10's, above.
+ */
+export const ANIMAL_CHICKEN_POSE_ROWS = {
+  idle: 0,
+  idleAlt: 1,
+  idleAlt2: 2,
+  peck: 3,
+  peckDeep: 4,
+  nest: 5,
+  lieDown: 6,
+} as const;
+
+/**
+ * **D-10, decided by measurement (T-15.10): the chicken sheet has no facings.**
+ *
+ * `node scripts/measure-animal-rows.mjs` runs three mechanical tests, and all
+ * three agree:
+ *
+ *   - MIRROR TEST — no row is any other row flipped horizontally (every pair
+ *     differs by far more than the 2% "same image" threshold). If the sheet
+ *     drew left and right explicitly, exactly one pair would have matched.
+ *   - SELF-SYMMETRY — every row's frame 0 differs from its own mirror by
+ *     70-75%. A front or back view is close to symmetric; these are all side
+ *     views.
+ *   - WIDTH — every row measures 13-14px wide. A head-on chicken would be
+ *     visibly narrower than one seen side-on. (Contrast the cow sheet below,
+ *     where this test separates 22px side views from 13px front/back views
+ *     immediately.)
+ *
+ * So rows 0-2 are three cosmetic look-angle variants of the same side-facing
+ * pose, not down/up/side. A chicken that needs to face right is the same row
+ * with `setFlipX`, and one that needs to face up or down reuses the side pose —
+ * which at T-15.12's wander radius of a few pixels is invisible anyway.
+ */
+export const ANIMAL_CHICKEN_MIRRORS_SIDE = true as const;
+
+/**
+ * Null, and that is the finding rather than a gap: see
+ * `ANIMAL_CHICKEN_MIRRORS_SIDE`. Typed so a future sheet that DOES carry
+ * per-direction rows has somewhere to put them.
+ */
+export const ANIMAL_CHICKEN_FACING_ROWS: Readonly<Record<string, number>> | null = null;
+
+/**
  * The baby chicken sheet's genuine egg-hatch sequence: row 4 is white egg →
  * cracking egg → chick emerging (with sparkle VFX) → chick fully out (still
  * sparkling). Confirmed by viewing the row at 12x scale — unmistakably an
@@ -697,6 +959,35 @@ export const ANIMAL_CHICKEN_BABY_HATCH_ROW = 4 as const;
  * distinguishes a standing cow from a lying one yet.
  */
 export const ANIMAL_COW_IDLE_ROW = 0 as const;
+
+/**
+ * Cow pose rows, named (T-15.10). Semantics are T-7.10's, above.
+ *
+ * **Unlike the chickens, the cow sheet really does carry front and back views**,
+ * and the width test says so without ambiguity: rows 0/3/5/7 measure 22-25px
+ * wide (side views) while rows 1/2/4/6/8 measure exactly 13px (head-on and
+ * tail-on). That is the whole reason `poseRowFor` takes a facing at all.
+ */
+export const ANIMAL_COW_POSE_ROWS = {
+  walkSide: 0,
+  walkFront: 1,
+  walkBack: 2,
+  lieSide: 3,
+  lieFront: 4,
+  lieSideHigh: 5,
+  lieBack: 6,
+  chewSide: 7,
+  chewBack: 8,
+} as const;
+
+/**
+ * The cow's side views face LEFT, so drawing one facing right means flipping.
+ *
+ * Measured (T-15.10): no cow row is any other row mirrored, so the sheet does
+ * not carry both side facings — there is exactly one, and T-7.10 read it as
+ * left-facing. Right is `setFlipX`.
+ */
+export const ANIMAL_COW_MIRRORS_SIDE = true as const;
 
 /* ------------------------------------------------------------------ *
  * Crops — new pack (T-7.04, frame semantics measured in T-7.08)
@@ -762,6 +1053,112 @@ export const CROP_LEEK: SheetSpec = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Crops — Phase 31 (T-31.02)
+ *
+ * Sixteen sheets in ONE append, which is the entire point of this task: gids
+ * are a running sum over `SHEETS` then `IMAGES` (`tilesets.ts`), so every
+ * touch of `SHEETS` renumbers every `IMAGES` firstgid and forces `farm.json`
+ * to be regenerated. Adding these one crop at a time would pay that cost
+ * sixteen times.
+ *
+ * **Every number below is measured, not typed** — `docs/crop-sheets.md`
+ * (T-31.01) records all thirty candidate sheets and
+ * `node scripts/measure-crops.mjs --md` regenerates it. What the measurement
+ * overturned matters here: the pack is NOT uniformly 8-frame-per-season, so
+ * `cols` varies (8 for spring and two fall sheets, 10 for summer and the rest
+ * of fall) and `Bell Pepper` alone has 11.
+ *
+ * **Nothing references these yet.** T-31.04 writes the `CropDef`s. They are
+ * loaded from the moment they are listed here, because `Preload` walks
+ * `SHEETS` — that is the deliberate cost of the one-append rule, and it is
+ * sixteen small PNGs.
+ *
+ * **Two exclusions, both deliberate and both from the measurement.** The eight
+ * 16x32 sheets are out because the crop sprite is centred on its tile
+ * (`Farm.ts`), so a 32px frame hangs half into the tile below — tall crops
+ * need a per-crop anchor, which is code, and this phase is config and art.
+ * `Bell Pepper` is out because no frame in it touches the bottom row, so its
+ * baseline differs from every other sheet's.
+ * ------------------------------------------------------------------ */
+
+export const CROP_ASPARAGUS: SheetSpec = {
+  key: 'crop-asparagus',
+  path: `${ASSET_BASE}/crop-asparagus.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_BROCCOLI: SheetSpec = {
+  key: 'crop-broccoli',
+  path: `${ASSET_BASE}/crop-broccoli.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_CABBAGE: SheetSpec = {
+  key: 'crop-cabbage',
+  path: `${ASSET_BASE}/crop-cabbage.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_CARROT: SheetSpec = {
+  key: 'crop-carrot',
+  path: `${ASSET_BASE}/crop-carrot.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_CAULIFLOWER: SheetSpec = {
+  key: 'crop-cauliflower',
+  path: `${ASSET_BASE}/crop-cauliflower.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_PARSNIP: SheetSpec = {
+  key: 'crop-parsnip',
+  path: `${ASSET_BASE}/crop-parsnip.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+export const CROP_RICE: SheetSpec = {
+  key: 'crop-rice',
+  path: `${ASSET_BASE}/crop-rice.png`,
+  width: 128,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 8,
+  rows: 1,
+};
+
+/* ------------------------------------------------------------------ *
  * Objects — new pack (T-7.04)
  *
  * The old pack's `HOUSE`/`HOUSE_BUILDINGS`/`houseLookFor`/`INTERIOR`/
@@ -823,6 +1220,20 @@ export const OBJ_MAPLE_TREE_ANIM: SheetSpec = {
     'stump, bare); col 0 plain, col 1 a solid-WHITE silhouette, cols 2-3 the ' +
     'same tree with drifting leaves. Measured in T-9.05 — see MAPLE_TREE.',
 };
+
+/**
+ * The stump left behind by chopping (T-20.04).
+ *
+ * Frame 18 — the first cell of row 2, which `OBJ_MAPLE_TREE`'s note has
+ * recorded as "stumps and acorns" since T-9.05. Verified rather than trusted:
+ * frames 19, 20 and 21 are all distinct siblings (20 wears snow), and 18's art
+ * spans crop x 9..22 — a 14px stump that lands squarely on the maple's measured
+ * 12px trunk (`OBJ_COLLISION_BASE`), so the stump stands exactly where the
+ * tree's base stood.
+ *
+ * On the STILL sheet, not the animated one: a stump has no leaves to drop.
+ */
+export const MAPLE_STUMP_FRAME = 18 as const;
 
 /**
  * The maple's idle loop (T-9.05), measured pixel by pixel rather than guessed.
@@ -1049,15 +1460,80 @@ export const OBJ_SHIPPING_BOX_LOOK = { x: 0, y: 16, width: 16, height: 16 } as c
  * tiles across and a little over two down, standing on the bottom edge like
  * every other map object).
  *
- * There is no merchant CHARACTER. The pack's NPC sheets are full walk cycles
- * for people who would need somewhere to walk; a stall is a thing you stand at,
- * which is exactly the interaction this needs.
+ * The stall is the COUNTER; the shopkeeper who stands at it is
+ * `NPC_MERCHANT_IDLE` below (T-18.02). T-11.04 shipped the stall alone and
+ * argued a full walk cycle needed somewhere to walk and a reason to be there —
+ * true of a villager with a schedule, but a vendor who stands at their own
+ * stall all day needs neither, and one idle pose is all that costs.
  */
 export const OBJ_NEWSSTAND: ImageSpec = {
   key: 'obj-newsstand',
   path: `${ASSET_BASE}/obj-newsstand.png`,
   width: 32,
   height: 48,
+};
+
+/**
+ * The shopkeeper standing at the stall (T-18.02) — the pack's premade
+ * blacksmith "Alaric", `Character/NPC'S/Blacksmith/Premade/Alaric`.
+ *
+ * **An `ImageSpec`, not a `SheetSpec`, and that is deliberate.** The file is a
+ * 16-frame strip and would slice cleanly, but every `SheetSpec` gets a
+ * `TILESET_RUNS` allocation, and inserting one shifts every `firstgid` after it
+ * in a `farm.json` that must not be regenerated (D-13/T-15.00). Loaded as a
+ * whole image and cropped into named frames — the same technique
+ * `registerDecorFrames` and the per-tier coop art already use — it appends to
+ * the END of `IMAGES` and moves nothing.
+ *
+ * **Geometry measured, not assumed** (§9): 512x32 = 16 frames of 32x32, four
+ * per direction block. Block 0 shows both eyes head-on, block 1 the back of the
+ * head; the alpha bbox bottom is row 26 in all sixteen frames — identical to
+ * the player's `CHAR_ART.bottom`, so `CHAR_ORIGIN` puts this character's feet
+ * on its position too.
+ *
+ * Only the DOWN block is used. The left/right blocks are the pair `assets.ts`
+ * warns is routinely mis-labelled, and there is no tool frame here to settle it
+ * the way the watering can settles it for the player — so rather than record a
+ * guess, this registers the one block that is unambiguous. A vendor facing the
+ * customer is also the only pose the interaction needs.
+ */
+export const NPC_MERCHANT_IDLE: ImageSpec = {
+  key: 'npc-merchant-idle',
+  path: `${ASSET_BASE}/npc-merchant-idle.png`,
+  width: 512,
+  height: 32,
+};
+
+/** Frames in the merchant's idle loop — the `down` block, measured above. */
+export const NPC_MERCHANT_IDLE_FRAMES = 4 as const;
+
+/** Playback rate for that loop. Slow: a shopkeeper shifting their weight. */
+export const NPC_MERCHANT_IDLE_FPS = 4 as const;
+
+/**
+ * The Chef (T-33.03) — the second face in the village.
+ *
+ * **The same geometry as the shopkeeper, measured rather than assumed**: 512x32
+ * = 16 frames of 32x32, four per direction block, and the alpha bottom is row 25
+ * in all sixteen — identical to `NPC_MERCHANT_IDLE` and to the player's
+ * `CHAR_ART.bottom`, so `CHAR_ORIGIN` puts this character's feet on its position
+ * too. The top row is 2 rather than 5, which is the chef's hat and nothing else.
+ *
+ * Block 0 is the front view here as well: rendering blocks 0 and 1 side by side
+ * shows a face in the first and the back of a head in the second, and blocks 2/3
+ * measure 15px wide against block 0's 17 — the narrow pair being the side views,
+ * which is the same signature the shopkeeper has.
+ *
+ * **There is no `NPC_BLACKSMITH_IDLE`, and that is a finding rather than an
+ * omission** (D-28). The pack ships two premade townsfolk, Gaston and Alaric,
+ * and `npc-merchant-idle.png` is already a copy of Alaric — so a blacksmith
+ * placed today would be the shopkeeper's twin standing in a field.
+ */
+export const NPC_CHEF_IDLE: ImageSpec = {
+  key: 'npc-chef-idle',
+  path: `${ASSET_BASE}/npc-chef-idle.png`,
+  width: 512,
+  height: 32,
 };
 
 export const OBJ_MAILBOX: SheetSpec = {
@@ -1142,6 +1618,49 @@ export const ICON_WHEAT: SheetSpec = {
 /** Frame index shared by every icon sheet above (see the module comment). */
 export const ITEM_ICON_FRAME = 0 as const;
 
+/**
+ * Seed packets (T-16.01) — `Icons/RPG icons/Extras/Bags.png`, seven 16x16
+ * sacks on one strip, one picked per crop via `CropDef.seedBagFrame`.
+ *
+ * **This is the one icon in the game that must NOT look like the thing it
+ * becomes.** Until T-16.01 a seed's inventory icon was `CROPS[crop].seedFrame`,
+ * which is the same number as `stageFrames[0]` — so the packet in the hotbar
+ * and the sprout in the soil were literally the same frame of the same sheet,
+ * and a full backpack of seeds looked like a row of tiny planted crops.
+ *
+ * The pack ships no seed art at all (searched: no file matching *seed* under
+ * `assets/`), so a coloured sack is a stand-in rather than a match — the
+ * same "closest match, keep the item id" reasoning `ICON_WHEAT` records for
+ * hay. Unlike hay, though, the substitution here is doing real work: the value
+ * is in NOT being the crop sheet, so any future swap must preserve that even
+ * if it finds better art.
+ */
+/**
+ * The pack's per-crop seed bags, produce icons and signposts, one crop per row
+ * (`Crops/All Crops.png`).
+ *
+ * Replaces `ICON_SEED_BAGS` (`Bags.png`), which held **seven** sacks. That was
+ * enough for four crops and not for twenty, and T-31.04 had to weaken "every
+ * crop takes a distinct seed bag" into "no bag carries more than
+ * `ceil(crops/bags)`". This sheet draws a bag for every crop, so the strong
+ * invariant is back.
+ *
+ * Three column-groups of eight, separated by an empty column. Column 0 of a
+ * group is the seed bag, column 2 the produce icon — see
+ * `docs/art-measurements.md` for the whole layout and how the crop-to-row
+ * mapping is derived rather than typed.
+ */
+export const ICON_ALL_CROPS: SheetSpec = {
+  key: 'icon-all-crops',
+  path: `${ASSET_BASE}/icon-all-crops.png`,
+  width: 416,
+  height: 288,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 26,
+  rows: 18,
+};
+
 /* ------------------------------------------------------------------ *
  * Tools — new pack (T-7.04)
  *
@@ -1158,6 +1677,46 @@ export const TOOL_HOE_WOOD: SheetSpec = {
   frameHeight: 16,
   cols: 2,
   rows: 1,
+};
+
+/**
+ * The wood axe (T-20.02) — `Weapons and Armor/1. Wood/Axe.png`.
+ *
+ * Same 32x16 two-frame strip as the hoe and the can, and the same convention:
+ * frame 0 is the plain icon, frame 1 the outlined variant, and `ITEM_ICON_FRAME`
+ * picks 0 so tools do not become the only bordered icons in the grid.
+ */
+export const TOOL_AXE_WOOD: SheetSpec = {
+  key: 'tool-axe-wood',
+  path: `${ASSET_BASE}/tool-axe-wood.png`,
+  width: 32,
+  height: 16,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 2,
+  rows: 1,
+};
+
+/**
+ * Wood, the thing a tree drops (T-20.02) — `Icons/RPG icons/Extras/Wood.png`.
+ *
+ * **A 4x3 grid of 16x16, not a 2-frame strip**, and the frames are not what a
+ * glance suggests. Measured: 0 and 1 are two plain logs (different shading, NOT
+ * duplicates — rows 0 and 1 differ pixel-wise), 2/3/6/7 are the same logs plus
+ * a white outline, and 8-11 are flat silhouettes for a shadow or mask pass.
+ * Frame 2 is provably frame 0 plus 36 added pixels and nothing removed, which
+ * is exactly the outline relationship the tool sheets have — so
+ * `ITEM_ICON_FRAME` = 0 stays the right choice here too.
+ */
+export const ICON_WOOD: SheetSpec = {
+  key: 'icon-wood',
+  path: `${ASSET_BASE}/icon-wood.png`,
+  width: 64,
+  height: 48,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 4,
+  rows: 3,
 };
 
 export const TOOL_WATERING_CAN_WOOD: SheetSpec = {
@@ -1253,12 +1812,68 @@ export const UI_ICON = {
   bag: { x: 48, y: 32 },
 } as const;
 
+/*
+ * **The MVP re-scope asked for a HUD frame from this sheet, and there is not
+ * one.** The brief said *"use the HUD images to make the experience more
+ * immersive"*; re-measured against the complete pack (which invalidated
+ * T-7.05's terrain conclusion, so re-checking was warranted), the sheet is
+ * still what T-11.05 found — 26x6 cells of 16x16 icons, every cell occupied,
+ * no nine-slice, no bar chrome, no panel corners. The energy bar and the clock
+ * therefore take their look from `UI/Bars.png` and `UI/Clock/`, which do hold
+ * the art the re-scope described. Recorded here so the next reader does not
+ * re-measure it a third time.
+ */
+
 export const UI_HUD: ImageSpec = {
   key: 'ui-hud',
   path: `${ASSET_BASE}/ui-hud.png`,
   width: 416,
   height: 96,
 };
+
+/**
+ * The day/night clock (MVP re-scope).
+ *
+ * A 32x32 face and a separate 256x32 strip of **eight hand positions**,
+ * measured rather than assumed: the opaque centroid of each frame sits at a
+ * bearing of roughly 0, 45, 90 ... 315 degrees, going clockwise from straight
+ * up. So the frame for a phase is simply the phase times eight, rounded — and
+ * a face with only eight positions is why the clock reads as a sundial rather
+ * than pretending to a minute hand it does not have.
+ */
+export const UI_CLOCK: ImageSpec = {
+  key: 'ui-clock',
+  path: `${ASSET_BASE}/ui-clock.png`,
+  width: 32,
+  height: 32,
+};
+
+export const UI_CLOCK_HAND: SheetSpec = {
+  key: 'ui-clock-hand',
+  path: `${ASSET_BASE}/ui-clock-hand.png`,
+  width: 256,
+  height: 32,
+  frameWidth: 32,
+  frameHeight: 32,
+  cols: 8,
+  rows: 1,
+};
+
+export const CLOCK_HAND_FRAMES = 8 as const;
+
+/**
+ * Which hand frame shows a phase of the day.
+ *
+ * Frame 0 points straight up, which is the top of the cycle — `timeOfDayAt`
+ * puts phase 0 there too, so the two agree without an offset constant to get
+ * wrong. Rounded, not floored: a hand that only reaches a position once it is
+ * fully past it lags the sky it is describing by an eighth of a day.
+ */
+export function clockHandFrame(phase: number): number {
+  if (!Number.isFinite(phase)) return 0;
+  const wrapped = ((phase % 1) + 1) % 1;
+  return Math.round(wrapped * CLOCK_HAND_FRAMES) % CLOCK_HAND_FRAMES;
+}
 
 export const UI_MONEY: ImageSpec = {
   key: 'ui-money',
@@ -1274,9 +1889,525 @@ export const UI_BUTTON: ImageSpec = {
   height: 544,
 };
 
+
+/**
+ * The farmhouse (T-15.29).
+ *
+ * A complete house: red-brown tile roof, cream walls, a wooden door, two
+ * windows and a stone chimney. `OBJ_TINY_HOUSE` is kept — the furniture
+ * catalogue still points its placeholder crops at it — but nothing draws the
+ * farm's house from it any more.
+ *
+ * **Measured, not assumed** (§9): the file is 128x112 with its art in
+ * x 2..125, y 13..99. The look below is the tight alpha box, so the sprite
+ * carries no transparent margin and its bottom edge really is where the house
+ * meets the ground.
+ */
+export const OBJ_FARMHOUSE: ImageSpec = {
+  key: 'obj-farmhouse',
+  path: `${ASSET_BASE}/obj-farmhouse.png`,
+  width: 128,
+  height: 112,
+};
+
+export const OBJ_FARMHOUSE_LOOK = { x: 2, y: 13, width: 124, height: 87 } as const;
+
+/**
+ * The upgraded farmhouses (T-17.06). `Houses/7.png` and `Houses/8.png`.
+ *
+ * **The tier gap was never about missing art.** `House.ts` said the upper tiers
+ * were "still waiting on art" and that was simply wrong: the pack ships twelve
+ * assembled houses, and three of them — 3, 7, 8 — are one brick-and-timber
+ * family at increasing size. The other nine are seasonal or themed variants
+ * (1 and 4 are the current house with a SNOW-covered roof; 5, 6, 12 are
+ * candy-cane; 2 and 9 a forest cottage; 10 a shopfront), which is why "pick
+ * three of the twelve" does not work.
+ *
+ * Measured as tight alpha boxes, like `OBJ_FARMHOUSE_LOOK`:
+ *
+ * | Tier | File | Look | Tiles |
+ * |---|---|---|---|
+ * | 0 | `3.png` | 124x87 | 8x6 |
+ * | 1 | `7.png` | 124x93 | 8x6 |
+ * | 2 | `8.png` | 128x109 | **8x7 — one row taller** |
+ *
+ * That extra row is what D-20 had to decide; see `HOUSE_ANCHOR`.
+ */
+export const OBJ_FARMHOUSE_T1: ImageSpec = {
+  key: 'obj-farmhouse-t1',
+  path: `${ASSET_BASE}/obj-farmhouse-t1.png`,
+  width: 128,
+  height: 96,
+};
+
+export const OBJ_FARMHOUSE_T1_LOOK = { x: 4, y: 3, width: 124, height: 93 } as const;
+
+export const OBJ_FARMHOUSE_T2: ImageSpec = {
+  key: 'obj-farmhouse-t2',
+  path: `${ASSET_BASE}/obj-farmhouse-t2.png`,
+  width: 128,
+  height: 128,
+};
+
+export const OBJ_FARMHOUSE_T2_LOOK = { x: 0, y: 7, width: 128, height: 109 } as const;
+
+/**
+ * The house by tier. `HOUSE_TIER_ART[farm.houseTier]` is the whole lookup.
+ *
+ * Same shape and same reasoning as `COOP_TIER_ART` / `BARN_TIER_ART` above —
+ * measurements of art, kept beside the windows they are built from, with
+ * `config.test.ts` pinning that this list and `HOUSE_TIERS` in `economy.ts`
+ * stay the same length. A tier with no picture would draw nothing at all.
+ */
+export const HOUSE_TIER_ART: readonly BuildingLook[] = [
+  { sheet: OBJ_FARMHOUSE, look: OBJ_FARMHOUSE_LOOK },
+  { sheet: OBJ_FARMHOUSE_T1, look: OBJ_FARMHOUSE_T1_LOOK },
+  { sheet: OBJ_FARMHOUSE_T2, look: OBJ_FARMHOUSE_T2_LOOK },
+];
+
+/* ------------------------------------------------------------------ *
+ * Interior — the house (T-16.07)
+ *
+ * T-3.05 recorded that "`Interior.png` is furniture only — no floor or wall
+ * tiles anywhere in the pack", drew the room as a chequered rectangle, and
+ * left `FURNITURE_SHEET` pointing at a placeholder. That was true of the OLD
+ * pack, deleted in T-7.07. This pack ships `Tileset/Tileset House.png`: 52x24
+ * tiles of wall bands and plank floors in about thirteen colourways, one
+ * directory over from where anyone looked — the same shape of miss as T-15.29's
+ * twelve assembled houses.
+ *
+ * The tileset is a real tileset and goes in `SHEETS`, because the interior map
+ * is painted from it. Everything else here is a KIT — a grid of assembled
+ * furniture at varying sizes, like the house/coop/barn exteriors — so they are
+ * `IMAGES` with measured crop windows per piece in `furniture.ts`, and being
+ * `IMAGES` appended at the end they shift no gids.
+ * ------------------------------------------------------------------ */
+
+export const TILESET_HOUSE: SheetSpec = {
+  key: 'tileset-house',
+  path: `${ASSET_BASE}/tileset-house.png`,
+  width: 832,
+  height: 384,
+  frameWidth: 16,
+  frameHeight: 16,
+  cols: 52,
+  rows: 24,
+};
+
+export const INTERIOR_CARPET: ImageSpec = {
+  key: 'interior-carpet',
+  path: `${ASSET_BASE}/interior-carpet.png`,
+  width: 224,
+  height: 192,
+};
+
+export const INTERIOR_BEDS: ImageSpec = {
+  key: 'interior-beds',
+  path: `${ASSET_BASE}/interior-beds.png`,
+  width: 384,
+  height: 512,
+};
+
+export const INTERIOR_TABLES: ImageSpec = {
+  key: 'interior-tables',
+  path: `${ASSET_BASE}/interior-tables.png`,
+  width: 512,
+  height: 384,
+};
+
+export const INTERIOR_CHAIRS: ImageSpec = {
+  key: 'interior-chairs',
+  path: `${ASSET_BASE}/interior-chairs.png`,
+  width: 304,
+  height: 224,
+};
+
+export const INTERIOR_DRESSERS: ImageSpec = {
+  key: 'interior-dressers',
+  path: `${ASSET_BASE}/interior-dressers.png`,
+  width: 256,
+  height: 160,
+};
+
+export const INTERIOR_FIREPLACES: ImageSpec = {
+  key: 'interior-fireplaces',
+  path: `${ASSET_BASE}/interior-fireplaces.png`,
+  width: 256,
+  height: 256,
+};
+
+export const INTERIOR_OPENINGS: ImageSpec = {
+  key: 'interior-openings',
+  path: `${ASSET_BASE}/interior-openings.png`,
+  width: 256,
+  height: 256,
+};
+
+export const INTERIOR_OTHERS: ImageSpec = {
+  key: 'interior-others',
+  path: `${ASSET_BASE}/interior-others.png`,
+  width: 144,
+  height: 112,
+};
+
+/**
+ * The pack's unlabelled trinket sheet (`Part 1 copiar.png`): framed pictures, a
+ * grandfather clock, potted plants, vases and lamps. Nothing in the pack is
+ * FILE-named for any of those, which is the whole reason T-3.05 could not find
+ * them and invented its own crops instead.
+ */
+export const INTERIOR_TRINKETS: ImageSpec = {
+  key: 'interior-trinkets',
+  path: `${ASSET_BASE}/interior-trinkets.png`,
+  width: 272,
+  height: 192,
+};
+
+/**
+ * Every interior furniture kit the catalogue draws from.
+ *
+ * `Sofa and armchair.png` and `Closet.png` are deliberately NOT here. They are
+ * in the pack and they are good art, but no piece in `furniture.ts` crops from
+ * them, and a registered sheet is a sheet every player downloads — 70KB for
+ * nothing. Add the file back the same day a piece needs it.
+ */
+export const INTERIOR_KITS: readonly ImageSpec[] = [
+  INTERIOR_CARPET,
+  INTERIOR_BEDS,
+  INTERIOR_TABLES,
+  INTERIOR_CHAIRS,
+  INTERIOR_DRESSERS,
+  INTERIOR_FIREPLACES,
+  INTERIOR_OPENINGS,
+  INTERIOR_OTHERS,
+  INTERIOR_TRINKETS,
+];
+
+/* ------------------------------------------------------------------ *
+ * Placeable decoration (T-15.15)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Every kit the decor catalogue draws from.
+ *
+ * All ten are KITS rather than sprites — eight scarecrows, twelve signs, a
+ * whole fence construction set — so `config/decor.ts` names a measured window
+ * into each rather than drawing the file. Declared as `ImageSpec` and appended
+ * to the END of `IMAGES` below, which is the one edit that shifts no gids
+ * (see the ORDER IS LOAD-BEARING note there).
+ */
+export const DECOR_FENCE_WOOD: ImageSpec = {
+  key: 'decor-fence-wood',
+  path: `${ASSET_BASE}/decor-fence-wood.png`,
+  width: 96,
+  height: 160,
+};
+
+export const DECOR_SCARECROW: ImageSpec = {
+  key: 'decor-scarecrow',
+  path: `${ASSET_BASE}/decor-scarecrow.png`,
+  width: 256,
+  height: 32,
+};
+
+export const DECOR_STREET_LAMP: ImageSpec = {
+  key: 'decor-street-lamp',
+  path: `${ASSET_BASE}/decor-street-lamp.png`,
+  width: 64,
+  height: 48,
+};
+
+export const DECOR_HAY_BALES: ImageSpec = {
+  key: 'decor-hay-bales',
+  path: `${ASSET_BASE}/decor-hay-bales.png`,
+  width: 96,
+  height: 16,
+};
+
+export const DECOR_FEED_TROUGH: ImageSpec = {
+  key: 'decor-feed-trough',
+  path: `${ASSET_BASE}/decor-feed-trough.png`,
+  width: 32,
+  height: 16,
+};
+
+export const DECOR_STONE_STATUE: ImageSpec = {
+  key: 'decor-stone-statue',
+  path: `${ASSET_BASE}/decor-stone-statue.png`,
+  width: 32,
+  height: 48,
+};
+
+export const DECOR_BIRDHOUSE: ImageSpec = {
+  key: 'decor-birdhouse',
+  path: `${ASSET_BASE}/decor-birdhouse.png`,
+  width: 32,
+  height: 32,
+};
+
+export const DECOR_VILLAGE_SIGNS: ImageSpec = {
+  key: 'decor-village-signs',
+  path: `${ASSET_BASE}/decor-village-signs.png`,
+  width: 192,
+  height: 64,
+};
+
+export const DECOR_BERRY_PILES: ImageSpec = {
+  key: 'decor-berry-piles',
+  path: `${ASSET_BASE}/decor-berry-piles.png`,
+  width: 96,
+  height: 32,
+};
+
+export const DECOR_STACKED_BARRELS: ImageSpec = {
+  key: 'decor-stacked-barrels',
+  path: `${ASSET_BASE}/decor-stacked-barrels.png`,
+  width: 48,
+  height: 48,
+};
+
 /* ------------------------------------------------------------------ *
  * Manifest
  * ------------------------------------------------------------------ */
+
+/**
+ * ORDER IS LOAD-BEARING. Read this before editing either array below.
+ *
+ * `TILESET_RUNS` (tilesets.ts) allocates global tile ids by walking `SHEETS`
+ * and then `IMAGES` in their declared order, giving every entry a contiguous
+ * run whether the map uses it or not. `apps/client/public/tilemaps/farm.json`
+ * is a committed file full of gids written against one particular allocation,
+ * and nothing renumbers it when this file changes.
+ *
+ * So:
+ *
+ *   - **Appending to the END of `IMAGES` shifts nothing.** That is the safe
+ *     edit, and it is why new art should go there when it has the choice.
+ *   - **Any insertion into `SHEETS`, or into the middle of `IMAGES`, shifts
+ *     every firstgid after it.** The map does not fail to load — it loads and
+ *     draws the wrong tiles, which is far worse. After such an edit you MUST:
+ *
+ *       node scripts/prepare-assets.mjs
+ *       apps/mapmaker/node_modules/.bin/tsx apps/mapmaker/scripts/generate-farm.ts
+ *       apps/mapmaker/node_modules/.bin/tsx apps/mapmaker/scripts/verify-farm.ts
+ *
+ * `apps/mapmaker/src/io/farmMap.test.ts` (T-15.01) enforces this: it compares
+ * the firstgid table `farm.json` embedded against the one this manifest
+ * currently produces, so the drift fails a test instead of shipping.
+ */
+/* ------------------------------------------------------------------ *
+ * Icon sheets — the manifest's third list, and the reason it exists (T-34.04)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Spritesheets that are **never painted on a map**.
+ *
+ * `TILESET_RUNS` allocates a gid to every entry in `SHEETS` and then every entry
+ * in `IMAGES`, so touching either renumbers the rest — and `farm.json` is a file
+ * full of already-written gids that nobody renumbers with it. Four item icons
+ * are stuck in `SHEETS` for that reason, each carrying a comment saying some
+ * version of *"nothing places an item icon on a map; it is here because §9
+ * requires one manifest listing every key"*, and each having cost a gid shift
+ * and a map regeneration to add.
+ *
+ * **This list is the same manifest guarantee without the gid.** Nothing here is
+ * gid-allocated, so appending to it — or inserting into the middle of it —
+ * shifts nothing and no map has to be touched. §9's rule is satisfied: every
+ * key is still listed in exactly one place, and `Preload` and `SHEETS_BY_KEY`
+ * read all three lists.
+ *
+ * **The four already in `SHEETS` deliberately stay there.** Moving them would
+ * shift every `IMAGES` firstgid *downward* — the same breakage as adding, in the
+ * other direction — and since M5 the map is AUTHORED, so "regenerate it" is no
+ * longer an available answer. They are paid for; this is where the next one
+ * goes.
+ *
+ * **The rule, stated once so it can be quoted:** if a sheet can be painted on a
+ * tilemap it belongs in `SHEETS`; if it can only ever appear in the HUD, it
+ * belongs here.
+ */
+export const ICON_SHEETS = [
+  {
+    key: 'icon-fish-carp',
+    path: `${ASSET_BASE}/icon-fish-carp.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-chub',
+    path: `${ASSET_BASE}/icon-fish-chub.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-perch',
+    path: `${ASSET_BASE}/icon-fish-perch.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-sunfish',
+    path: `${ASSET_BASE}/icon-fish-sunfish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-shad',
+    path: `${ASSET_BASE}/icon-fish-shad.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-bullhead-catfish',
+    path: `${ASSET_BASE}/icon-fish-bullhead-catfish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-large-mouth-bass',
+    path: `${ASSET_BASE}/icon-fish-large-mouth-bass.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-walleye',
+    path: `${ASSET_BASE}/icon-fish-walleye.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-pike',
+    path: `${ASSET_BASE}/icon-fish-pike.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-tiger-trout',
+    path: `${ASSET_BASE}/icon-fish-tiger-trout.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-sturgeon',
+    path: `${ASSET_BASE}/icon-fish-sturgeon.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-dorado',
+    path: `${ASSET_BASE}/icon-fish-dorado.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-ghost-catfish',
+    path: `${ASSET_BASE}/icon-fish-ghost-catfish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-bone-fish',
+    path: `${ASSET_BASE}/icon-fish-bone-fish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-zombie-fish',
+    path: `${ASSET_BASE}/icon-fish-zombie-fish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-dynamite-fish',
+    path: `${ASSET_BASE}/icon-fish-dynamite-fish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-faeries-fish',
+    path: `${ASSET_BASE}/icon-fish-faeries-fish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+  {
+    key: 'icon-fish-golden-fish',
+    path: `${ASSET_BASE}/icon-fish-golden-fish.png`,
+    width: 64,
+    height: 16,
+    frameWidth: 16,
+    frameHeight: 16,
+    cols: 4,
+    rows: 1,
+  },
+] as const satisfies readonly SheetSpec[];
 
 export const SHEETS = [
   // New pack (T-7.04).
@@ -1299,6 +2430,41 @@ export const SHEETS = [
   OBJ_MAILBOX,
   TOOL_HOE_WOOD,
   TOOL_WATERING_CAN_WOOD,
+  // The interior floor/wall tileset (T-16.07). In SHEETS because the interior
+  // map is painted from it; the furniture KITS are IMAGES, appended below.
+  TILESET_HOUSE,
+  // Appended at the END (T-16.01). It has to live in SHEETS rather than
+  // IMAGES — it is a 7-frame strip and `runFromImage` allocates exactly one
+  // tile — so it shifts every IMAGES firstgid, and the map was regenerated per
+  // the procedure above. Nothing places an item icon on a map; it is here
+  // because §9 requires one manifest listing every key.
+  ICON_ALL_CROPS,
+  // Appended at the END for the same reason `ICON_SEED_BAGS` was (T-18.09):
+  // anywhere else renumbers every tileset that follows. The map WAS regenerated
+  // afterwards, and `farmMap.test.ts` pins the result.
+  TILESET_PROPS_SEASONS,
+  // Chopping (T-20.02), appended for the same reason again. Both are item
+  // icons; nothing places them on a map, and they are here only because §9
+  // requires one manifest listing every key.
+  TOOL_AXE_WOOD,
+  ICON_WOOD,
+  // Phase 31's crops (T-31.02). Appended at the END in one batch — see the
+  // crop section above for why one batch, and `farmMap.test.ts` for what
+  // happens if this is inserted anywhere else. `farm.json` WAS regenerated.
+  CROP_ASPARAGUS,
+  CROP_BROCCOLI,
+  CROP_CABBAGE,
+  CROP_CARROT,
+  CROP_CAULIFLOWER,
+  CROP_PARSNIP,
+  CROP_RICE,
+  /*
+   * The MVP re-scope's ground art, appended in ONE batch at the end — the
+   * water the map floats on and the cliff edges where land meets it. Touching
+   * SHEETS renumbers every IMAGES firstgid, so this is deliberately a single
+   * append and `farm.json` was regenerated with it.
+   */
+  TILESET_WATER_ANIM,
 ] as const satisfies readonly SheetSpec[];
 
 export const IMAGES = [
@@ -1318,11 +2484,37 @@ export const IMAGES = [
   UI_HUD,
   UI_MONEY,
   UI_BUTTON,
-  // New pack (T-7.05) — first-party ground fills, see GROUND_GRASS's comment.
-  GROUND_GRASS,
-  GROUND_SOIL_DRY,
-  GROUND_SOIL_WET,
-  GROUND_PATH,
+  /*
+   * The five first-party ground fills used to sit here. They are gone: the
+   * ground now comes from the pack's own tilesets (see "Ground, painted from
+   * the pack" above). Removing IMAGES entries shifts every firstgid after
+   * them, so `farm.json` was regenerated in the same change.
+   */
+  // The farmhouse (T-15.29) and placeable decoration (T-15.15).
+  // Appended, never inserted — see the ORDER IS LOAD-BEARING note above.
+  OBJ_FARMHOUSE,
+  DECOR_FENCE_WOOD,
+  DECOR_SCARECROW,
+  DECOR_STREET_LAMP,
+  DECOR_HAY_BALES,
+  DECOR_FEED_TROUGH,
+  DECOR_STONE_STATUE,
+  DECOR_BIRDHOUSE,
+  DECOR_VILLAGE_SIGNS,
+  DECOR_BERRY_PILES,
+  DECOR_STACKED_BARRELS,
+  // Interior furniture kits (T-16.07). Appended, never inserted.
+  ...INTERIOR_KITS,
+  // The merchant NPC (T-18.02). Appended at the very END, which is the one edit
+  // that shifts no firstgid — see the ORDER IS LOAD-BEARING note above. It is an
+  // ImageSpec rather than a SHEETS entry precisely so it can go here.
+  NPC_MERCHANT_IDLE,
+  // The upgraded farmhouses (T-17.06). Appended, never inserted.
+  OBJ_FARMHOUSE_T1,
+  OBJ_FARMHOUSE_T2,
+  // The Chef (T-33.03). Appended at the very END, the one edit that shifts no
+  // firstgid — which is why `farm.json` is untouched by this task.
+  NPC_CHEF_IDLE,
 ] as const satisfies readonly ImageSpec[];
 
 /** World tile size in source pixels. Everything on the farm grid is 16px. */

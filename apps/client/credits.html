@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Credits — Tillhaven</title>
+    <meta
+      name="description"
+      content="The artists and typefaces behind Tillhaven, and the licences their work ships under."
+    />
+    <meta name="theme-color" content="#f2e3ce" />
+    <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
+  </head>
+  <body class="auth">
+    <header class="masthead">
+      <div class="wrap masthead__inner">
+        <a class="wordmark" href="/">
+          <span data-sprite="wordmark"></span>
+          Tillhaven
+        </a>
+        <nav class="masthead__nav">
+          <a class="btn btn--primary" href="/register">Start your farm</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="legal">
+      <div class="wrap legal__body">
+        <p class="eyebrow">Credits</p>
+        <h1 class="legal__title">Everyone whose work you are looking at.</h1>
+
+        <p>
+          Tillhaven is drawn almost entirely in someone else's hand. The farm,
+          the animals, the crops, the buildings, the character and every frame
+          of the interface come from one pixel-art pack, and the type is two
+          open-licensed faces. Crediting them is not a courtesy here — it is a
+          condition of both licences, and this page is where it is met.
+        </p>
+
+        <!--
+          Every row below is rendered from `CREDITS` in
+          `packages/shared/src/config/credits.ts`. Nothing on this page is typed
+          by hand, deliberately: a credit that lives in markup is a credit that
+          disappears in the next redesign, which is the exact failure the config
+          comment warns about. `config.test.ts` proves every bundled font has a
+          row and a shipped licence file.
+        -->
+        <section class="credits" data-credits="art">
+          <h2>Art</h2>
+        </section>
+
+        <section class="credits" data-credits="font">
+          <h2>Type</h2>
+        </section>
+
+        <section class="credits" data-credits="software">
+          <h2>Software</h2>
+        </section>
+
+        <h2>The full terms</h2>
+        <p>
+          The art pack permits commercial use and modification, and forbids
+          resale or redistribution of the assets themselves. The typefaces are
+          under the SIL Open Font License 1.1, which permits bundling and
+          requires the licence text to travel with the font — it does, and each
+          one is linked above. The verbatim terms for everything are recorded in
+          <code>ATTRIBUTION.md</code> in the repository.
+        </p>
+
+        <p class="legal__back"><a href="/">Back to the farm gate</a></p>
+      </div>
+    </main>
+
+    <footer class="sitefoot">
+      <div class="wrap sitefoot__inner">
+        <p class="mono">Tillhaven · Spring build</p>
+        <nav class="sitefoot__links mono">
+          <a href="/">Home</a>
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+        </nav>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/pages/credits.ts"></script>
+  </body>
+</html>

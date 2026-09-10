@@ -1,3 +1,4 @@
+import type { InventorySlot } from '@tillhaven/shared';
 import { and, asc, eq } from 'drizzle-orm';
 import {
   GameError,
@@ -202,11 +203,7 @@ export async function listSlots(
  * reasoning about a container it is not reading from the database — which is
  * exactly what the idle simulator does (T-13.03c).
  */
-export interface SlotContents {
-  readonly slotIndex: number;
-  readonly itemId: string;
-  readonly quantity: number;
-}
+export type SlotContents = InventorySlot;
 
 /**
  * Plans where `quantity` of `itemId` would go: top up partial stacks first,

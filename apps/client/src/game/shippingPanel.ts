@@ -1,3 +1,4 @@
+import { MODAL_ATTR } from '../lib/focus.js';
 import { ITEMS } from '@tillhaven/shared/config';
 import { messageFor } from '../net/errors.js';
 import { idempotencyKey } from '../net/api.js';
@@ -58,6 +59,9 @@ export class ShippingPanel {
 
     this.root = document.createElement('section');
     this.root.className = 'shipping';
+    // A dialog the player is reading, so it takes movement input (T-18.12).
+    // `isModalOpen` finds it by this attribute; see `lib/focus.ts`.
+    this.root.setAttribute(MODAL_ATTR, '');
     this.root.hidden = true;
     this.root.setAttribute('aria-label', 'Shipping box');
     this.root.innerHTML = `
@@ -89,7 +93,21 @@ export class ShippingPanel {
 
     this.root.querySelector('[data-close]')!.addEventListener('click', () => this.hide());
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.open) this.hide();
+      if (e.key !== 'Escape' || !this.open) return;
+      /*
+       * Consume the press (T-18.13, BUG-11). Phaser's keyboard plugin listens
+       * on `window`; these panels listen on `document`, which is the last hop
+       * before it — so stopping here is what keeps one Escape to one layer.
+       * Without it, closing this panel ALSO ran the Interior scene's handler
+       * and walked the player out of the house in the same press.
+       *
+       * `stopPropagation`, not `stopImmediatePropagation`: the other panels'
+       * listeners are on this same node and are harmless (each checks its own
+       * `open`), and silencing them would make this depend on registration
+       * order, which is the thing that made the bug hard to see.
+       */
+      e.stopPropagation();
+      this.hide();
     });
 
     return this.root;

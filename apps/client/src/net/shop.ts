@@ -15,6 +15,18 @@ export interface ShopEntry {
   readonly category: string;
   readonly buyPrice: number | null;
   readonly sellPrice: number | null;
+  /**
+   * Farm level needed to buy this, or `null` when nothing gates it (T-31.06).
+   *
+   * **The fourth time this repo has had to add a field the server was already
+   * sending** — `SelfPlayer` (T-30.01), `HarvestResult` (T-30.02),
+   * `CollectResult` (T-30.04) and now this. The wire has never been the
+   * problem; the client's own declarations were. Worth naming as a pattern:
+   * when a server view gains a field, the matching interface in `net/` is the
+   * thing that quietly drops it, and nothing fails until something tries to
+   * read it.
+   */
+  readonly unlockLevel: number | null;
 }
 
 export interface TradeResult {

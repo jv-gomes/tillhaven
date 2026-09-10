@@ -8,6 +8,7 @@ import {
   type Bounds,
   type MoveInput,
   type MoveState,
+  type World,
 } from './movement.js';
 
 const BOUNDS: Bounds = { minX: 0, maxX: 320, minY: 0, maxY: 256 };
@@ -193,5 +194,166 @@ describe('step while running', () => {
     const woken = step(START, input({ right: true, run: true }), 30_000, BOUNDS);
     const capped = step(START, input({ right: true, run: true }), MAX_STEP_MS, BOUNDS);
     expect(woken.x).toBe(capped.x);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Collision (T-15.06)
+ * ------------------------------------------------------------------ */
+
+const TILE = 16;
+/** The same box shared config defines as `PLAYER_COLLIDER`. */
+const COLLIDER = { halfWidth: 5, height: 6 };
+
+/** A world where the named tiles are solid and everything else is open. */
+function worldOf(...solid: readonly (readonly [number, number])[]): World {
+  const keys = new Set(solid.map(([x, y]) => `${x},${y}`));
+  return {
+    collider: COLLIDER,
+    tileSize: TILE,
+    blocked: (x, y) => keys.has(`${x},${y}`),
+  };
+}
+
+/** Feet position at the centre of a tile, where the character stands. */
+function centreOf(tileX: number, tileY: number): MoveState {
+  return {
+    x: tileX * TILE + TILE / 2,
+    y: tileY * TILE + TILE - 1,
+    facing: 'down',
+    moving: false,
+    running: false,
+  };
+}
+
+function walkInto(from: MoveState, held: MoveInput, world: World, frames: number): MoveState {
+  let state = from;
+  for (let i = 0; i < frames; i++) state = step(state, held, MAX_STEP_MS, BOUNDS, world);
+  return state;
+}
+
+describe('step with collision', () => {
+  it('is unchanged when no world is supplied', () => {
+    const free = step(START, input({ right: true }), MAX_STEP_MS, BOUNDS);
+    const alsoFree = step(START, input({ right: true }), MAX_STEP_MS, BOUNDS, worldOf());
+    expect(alsoFree.x).toBe(free.x);
+  });
+
+  it('stops the player walking head-on into a solid tile', () => {
+    const start = centreOf(5, 5);
+    const world = worldOf([6, 5]);
+    const after = walkInto(start, input({ right: true }), world, 20);
+
+    // Blocked well before the far side of the solid tile.
+    expect(after.x).toBeLessThan(6 * TILE);
+    // And it did not simply refuse to move at all.
+    expect(after.x).toBeGreaterThan(start.x);
+  });
+
+  /*
+   * The reason the sweep is per-axis and ordered. Resolving both axes against
+   * the ORIGINAL position makes this test fail: the character stops dead the
+   * moment it touches the wall at an angle, instead of sliding along it.
+   */
+  it('slides along a wall on a diagonal instead of sticking', () => {
+    const start = centreOf(5, 5);
+    const world = worldOf([6, 5], [6, 4], [6, 6]); // a wall to the east
+    const after = walkInto(start, input({ right: true, up: true }), world, 10);
+
+    expect(after.x).toBeLessThan(6 * TILE); // blocked horizontally
+    expect(after.y).toBeLessThan(start.y); // but still moving north
+  });
+
+  /*
+   * Why the Y sweep tests the ALREADY-RESOLVED x rather than the original.
+   *
+   * Moving right+down with only the diagonal tile solid: the X move slides the
+   * collider into column 6, and the Y move must then be judged from there. Test
+   * Y against the ORIGINAL x — still wholly in column 5 — and it sees no
+   * blocker, so the character finishes the frame standing inside the solid
+   * tile. It is a one-word difference in `resolve` and the symptom is a player
+   * embedded in a wall.
+   *
+   * Asserted on the FIRST frame deliberately. Once the collider is inside a
+   * solid tile, `resolve`'s escape hatch turns collision off until it is clear
+   * again (so nobody is ever trapped) — which means a longer walk washes the
+   * evidence away and the test would pass either way.
+   */
+  it('never comes to rest inside a solid tile when cutting a diagonal corner', () => {
+    const world = worldOf([6, 6]);
+    const after = step(centreOf(5, 5), input({ right: true, down: true }), MAX_STEP_MS, BOUNDS, world);
+
+    const left = Math.floor((after.x - COLLIDER.halfWidth) / TILE);
+    const right = Math.ceil((after.x + COLLIDER.halfWidth) / TILE) - 1;
+    const top = Math.floor((after.y - COLLIDER.height) / TILE);
+    const bottom = Math.ceil(after.y / TILE) - 1;
+
+    for (let ty = top; ty <= bottom; ty++) {
+      for (let tx = left; tx <= right; tx++) {
+        expect(world.blocked(tx, ty), `resting inside solid tile (${tx},${ty})`).toBe(false);
+      }
+    }
+  });
+
+  it('stops in a corner where both axes are blocked', () => {
+    const start = centreOf(5, 5);
+    const world = worldOf([6, 5], [5, 4], [6, 4]);
+    const after = walkInto(start, input({ right: true, up: true }), world, 10);
+
+    expect(after.x).toBeLessThan(6 * TILE);
+    expect(after.y).toBeGreaterThan(4 * TILE + TILE - 1);
+  });
+
+  it('comes to rest flush against the wall, not a frame-step short of it', () => {
+    /*
+     * A frame covers up to 8.4px. Refusing a blocked step outright would stop
+     * the character up to 8px from the wall AND leave it unable to close the
+     * gap, because every later frame proposes the same blocked destination —
+     * an invisible wall standing off the real one. `slide` snaps the leading
+     * edge to the tile boundary instead.
+     */
+    const after = walkInto(centreOf(5, 5), input({ right: true }), worldOf([6, 5]), 20);
+    expect(after.x + COLLIDER.halfWidth).toBe(6 * TILE);
+  });
+
+  it('keeps facing the wall it is walking into', () => {
+    // So the faced-tile action still targets what the player is pressed against.
+    const after = walkInto(centreOf(5, 5), input({ right: true }), worldOf([6, 5]), 10);
+    expect(after.facing).toBe('right');
+  });
+
+  it('lets a player already inside a solid tile walk out again', () => {
+    // Reachable for real: buy a Deluxe barn while standing where its wall lands.
+    // Trapping the player there would need a support ticket to undo.
+    const inside = centreOf(5, 5);
+    const world = worldOf([5, 5]);
+    const after = step(inside, input({ right: true }), MAX_STEP_MS, BOUNDS, world);
+    expect(after.x).toBeGreaterThan(inside.x);
+  });
+
+  it('fits through a one-tile gap between two solid tiles', () => {
+    // A 10px collider through a 16px gap. This is what PLAYER_COLLIDER.halfWidth
+    // is sized for; widening it to 8 makes this fail.
+    const start = centreOf(5, 6);
+    const world = worldOf([4, 5], [6, 5]); // gap at x=5
+    const after = walkInto(start, input({ up: true }), world, 20);
+    expect(after.y).toBeLessThan(5 * TILE);
+  });
+
+  it('cannot tunnel: RUN_SPEED * MAX_STEP_MS < TILE_SIZE', () => {
+    /*
+     * Collision tests the move's ENDPOINT, not the segment swept to reach it,
+     * which is only sound while a single frame cannot cross a whole tile.
+     * 84px/s * 0.1s = 8.4px against a 16px tile. Pinned rather than trusted:
+     * a future speed increase should fail a test here rather than let players
+     * run through the barn.
+     */
+    expect((RUN_SPEED * MAX_STEP_MS) / 1000).toBeLessThan(TILE);
+  });
+
+  it('still respects the map bounds when a world is supplied', () => {
+    const far = ONE_SECOND_FRAMES * 30;
+    const after = walkInto(START, input({ right: true }), worldOf(), far);
+    expect(after.x).toBe(BOUNDS.maxX);
   });
 });

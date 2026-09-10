@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   ANIMALS,
   ErrorCode,
@@ -9,10 +9,12 @@ import {
   type AnimalBuilding,
   type AnimalKind,
   type AnimalVariant,
+  EnergyAction,
 } from '@tillhaven/shared';
 import { schema } from '../../db/client.js';
 import type { Queryable, Tx } from '../../db/tx.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
+import { readEnergyRow, spendEnergy } from '../farm/energy.js';
 import { farmTiers, type FarmTiers } from '../farm/tiers.js';
 import { addItem, removeItem, capacityForPlayer, Container } from '../inventory/service.js';
 import { collectAt, feedAt, productionAt } from './production.js';
@@ -286,6 +288,8 @@ export async function collect(
     });
   }
 
+  await spendEnergy(tx, player, EnergyAction.COLLECT, now);
+
   const capacity = await capacityForPlayer(tx, player, Container.INVENTORY, now);
 
   // Throws INVENTORY_FULL and rolls back, leaving the produce with the animal.
@@ -306,6 +310,115 @@ export async function collect(
     quantity: collected.quantity,
     experience,
     farmLevel: levelForXp(experience),
+  };
+}
+
+export interface CollectAllResult {
+  readonly collected: readonly CollectResult[];
+  /** Ready produce was left with its animal because the bag filled. */
+  readonly stoppedByFullBag: boolean;
+  /** True when the batch stopped because the farmer ran out of energy. */
+  readonly stoppedByEnergy: boolean;
+  readonly experience: number;
+  readonly farmLevel: number;
+}
+
+/**
+ * Collects from every ready animal in one intent — `VIP_BENEFITS.autoCollect`
+ * (T-24.02, D-23). The twin of `harvestAll`, and the same three rules apply,
+ * for the same reasons: it loops over the real `collect` rather than
+ * reimplementing it, each animal gets its own savepoint (see `harvestAll` for
+ * what that actually buys — it is not what it looks like), and animals are
+ * taken in `id` order so two batches cannot deadlock.
+ *
+ * The one difference is what counts as "skip". A plot is either ripe or not; an
+ * animal can be too young, unfed, or merely early, and all three mean *this one
+ * has nothing for you right now* rather than an error. An unfed cow in the barn
+ * must not stop the button from emptying the coop.
+ */
+export async function collectAll(
+  tx: Tx,
+  player: AuthedPlayer,
+  now: number,
+): Promise<CollectAllResult> {
+  const benefits = benefitsFor(player, now);
+  if (!benefits.autoCollect) {
+    throw new GameError(ErrorCode.FORBIDDEN, 'Collecting everything at once is a VIP perk.');
+  }
+
+  // Unlocked scan; every candidate is re-checked under its row lock in `collect`.
+  const rows = await tx
+    .select({ animal: schema.animals })
+    .from(schema.animals)
+    .innerJoin(schema.farms, eq(schema.animals.farmId, schema.farms.id))
+    .where(eq(schema.farms.playerId, player.id))
+    .orderBy(asc(schema.animals.id));
+
+  const ready = rows
+    .map((r) => r.animal)
+    .filter((animal) => {
+      const def = ANIMALS[animal.kind as AnimalKind];
+      if (!def) return false;
+      return productionAt(animal, now, benefits.durationPercent).cyclesOwed > 0;
+    });
+
+  if (ready.length === 0) {
+    throw new GameError(ErrorCode.NOTHING_TO_COLLECT, 'Nothing is ready to collect yet.');
+  }
+
+  const collected: CollectResult[] = [];
+  let stoppedByFullBag = false;
+  let stoppedByEnergy = false;
+
+  for (const animal of ready) {
+    try {
+      // Re-read every iteration: `collect` charges energy with a conditional
+      // update, so the session copy is stale after the first animal.
+      const energy = await readEnergyRow(tx, player.id);
+      const current: AuthedPlayer = { ...player, ...energy };
+
+      const result = await tx.transaction((sp) => collect(sp as Tx, current, animal.id, now));
+      collected.push(result);
+    } catch (err) {
+      if (!(err instanceof GameError)) throw err;
+      if (err.code === ErrorCode.INVENTORY_FULL) {
+        stoppedByFullBag = true;
+        break;
+      }
+      // Out of energy partway through: stop cleanly and report how far it got,
+      // exactly as a full bag does.
+      if (err.code === ErrorCode.INSUFFICIENT_ENERGY) {
+        stoppedByEnergy = true;
+        break;
+      }
+      if (
+        err.code === ErrorCode.NOTHING_TO_COLLECT ||
+        err.code === ErrorCode.ANIMAL_UNFED ||
+        err.code === ErrorCode.ANIMAL_NOT_MATURE
+      ) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (collected.length === 0 && stoppedByEnergy) {
+    throw new GameError(ErrorCode.INSUFFICIENT_ENERGY, 'You are too tired.');
+  }
+  if (collected.length === 0 && !stoppedByFullBag) {
+    throw new GameError(ErrorCode.NOTHING_TO_COLLECT, 'Nothing is ready to collect yet.');
+  }
+  if (collected.length === 0) {
+    throw new GameError(ErrorCode.INVENTORY_FULL, 'Your bag is full.');
+  }
+
+  const last = collected[collected.length - 1]!;
+  return {
+    collected,
+    stoppedByFullBag,
+    stoppedByEnergy,
+    experience: last.experience,
+    farmLevel: last.farmLevel,
   };
 }
 
@@ -336,6 +449,8 @@ export async function feed(
 
   const result = feedAt(animal, now, durationPercent);
 
+
+  await spendEnergy(tx, player, EnergyAction.FEED, now);
   await tx
     .update(schema.animals)
     .set({ fedUntil: result.fedUntil, lastCollectedAt: result.lastCollectedAt })

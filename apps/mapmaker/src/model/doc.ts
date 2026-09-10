@@ -7,7 +7,12 @@
  * invents a number.
  */
 
-import { FARM_HEIGHT, FARM_WIDTH, TILE_SIZE } from '@tillhaven/shared/config';
+import {
+  FARM_HEIGHT,
+  FARM_WIDTH,
+  SUBTILE_RESOLUTION,
+  TILE_SIZE,
+} from '@tillhaven/shared/config';
 
 /**
  * Default map size, matching the farm grid.
@@ -64,7 +69,61 @@ export interface PlotLayer extends LayerBase {
   cells: PlotCell[];
 }
 
-export type Layer = TileLayer | ObjectLayer | PlotLayer;
+/**
+ * One animated ground cell.
+ *
+ * `animId` names an entry in `GROUND_ANIMATIONS`, which owns the frames and the
+ * rate — the map records WHERE, never WHAT. Two maps stamping `water-ripple`
+ * therefore cannot disagree about how fast it ripples, and re-timing an
+ * animation is a config edit rather than a map regeneration.
+ */
+export interface AnimCell {
+  x: number;
+  y: number;
+  animId: string;
+}
+
+/**
+ * Animated ground (the mapmaker's third authored thing).
+ *
+ * Order does not matter here, unlike `PlotLayer` — nothing is priced by index
+ * and nothing unlocks in sequence. Stored as a list rather than a grid because
+ * animated cells are sparse: a grid would be 660 mostly-empty entries in every
+ * map file to hold the handful that are set.
+ */
+export interface AnimLayer extends LayerBase {
+  kind: 'anim';
+  cells: AnimCell[];
+}
+
+/**
+ * Authored sub-tile collision.
+ *
+ * **Cells, not tiles**, at `SUBTILE_RESOLUTION` per tile on each axis — the same
+ * grid the game collides on. Stored as a sparse list of solid cells for the
+ * reason `AnimLayer` is a list: a full grid would be 5,940 mostly-empty entries
+ * in every map file to carry the handful that are set.
+ *
+ * **This is ADDITIVE to the art's own collision, never a replacement.** The
+ * building silhouettes and terrain masks in `collision.ts` are properties of the
+ * ART — a shoreline tile is the same shape everywhere it is stamped — and they
+ * stay where they are. This layer is for the shapes the art cannot express
+ * because they are not about the art: a fenced-off corner, a gap the player
+ * should not fit through, a ledge that reads as walkable and is not.
+ */
+export interface CollisionLayer extends LayerBase {
+  kind: 'collision';
+  /** Solid cells, in collision coordinates. */
+  cells: CollisionCell[];
+}
+
+/** One solid cell of the collision grid. `cx`/`cy` to match `CellPoint`. */
+export interface CollisionCell {
+  cx: number;
+  cy: number;
+}
+
+export type Layer = TileLayer | ObjectLayer | PlotLayer | AnimLayer | CollisionLayer;
 
 export interface MapDoc {
   width: number;
@@ -80,6 +139,8 @@ export const GROUND_LAYER_ID = 'ground';
 export const DECOR_LAYER_ID = 'decor';
 export const OBJECT_LAYER_ID = 'objects';
 export const PLOT_LAYER_ID = 'plots';
+export const ANIM_LAYER_ID = 'animations';
+export const COLLISION_LAYER_ID = 'collision';
 
 export function createDoc(width = DEFAULT_WIDTH, height = DEFAULT_HEIGHT): MapDoc {
   return {
@@ -92,6 +153,22 @@ export function createDoc(width = DEFAULT_WIDTH, height = DEFAULT_HEIGHT): MapDo
       createTileLayer(DECOR_LAYER_ID, 'decor', width, height),
       { kind: 'object', id: OBJECT_LAYER_ID, name: 'objects', visible: true, opacity: 1, objects: [] },
       { kind: 'plots', id: PLOT_LAYER_ID, name: 'plots', visible: true, opacity: 1, cells: [] },
+      {
+        kind: 'anim',
+        id: ANIM_LAYER_ID,
+        name: 'animations',
+        visible: true,
+        opacity: 1,
+        cells: [],
+      },
+      {
+        kind: 'collision',
+        id: COLLISION_LAYER_ID,
+        name: 'collision',
+        visible: true,
+        opacity: 1,
+        cells: [],
+      },
     ],
     nextObjectId: 1,
   };
@@ -122,6 +199,14 @@ export function objectLayer(doc: MapDoc): ObjectLayer | undefined {
 
 export function plotLayer(doc: MapDoc): PlotLayer | undefined {
   return doc.layers.find((layer): layer is PlotLayer => layer.kind === 'plots');
+}
+
+export function animLayer(doc: MapDoc): AnimLayer | undefined {
+  return doc.layers.find((layer): layer is AnimLayer => layer.kind === 'anim');
+}
+
+export function collisionLayer(doc: MapDoc): CollisionLayer | undefined {
+  return doc.layers.find((layer): layer is CollisionLayer => layer.kind === 'collision');
 }
 
 export function inBounds(doc: MapDoc, x: number, y: number): boolean {
@@ -165,7 +250,16 @@ export function resizeDoc(doc: MapDoc, width: number, height: number): void {
       layer.objects = layer.objects.filter(
         (o) => o.px < width * doc.tileWidth && o.py < height * doc.tileHeight,
       );
+    } else if (layer.kind === 'collision') {
+      // Collision cells are in the FINER grid, so the bound is multiplied. A
+      // clip written for tile space would silently keep two thirds of the cells
+      // that just fell off the map.
+      layer.cells = layer.cells.filter(
+        (c) => c.cx < width * SUBTILE_RESOLUTION && c.cy < height * SUBTILE_RESOLUTION,
+      );
     } else {
+      // Plots and animations are both `{x, y}` lists in tile space, so the same
+      // clip applies to each.
       layer.cells = layer.cells.filter((c) => c.x < width && c.y < height);
     }
   }
@@ -184,6 +278,10 @@ export function cloneDoc(doc: MapDoc): MapDoc {
     layers: doc.layers.map((layer): Layer => {
       if (layer.kind === 'tile') return { ...layer, data: Int32Array.from(layer.data) };
       if (layer.kind === 'object') return { ...layer, objects: layer.objects.map((o) => ({ ...o })) };
+      if (layer.kind === 'anim') return { ...layer, cells: layer.cells.map((c) => ({ ...c })) };
+      if (layer.kind === 'collision') {
+        return { ...layer, cells: layer.cells.map((c) => ({ ...c })) };
+      }
       return { ...layer, cells: layer.cells.map((c) => ({ ...c })) };
     }),
   };

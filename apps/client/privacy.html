@@ -32,7 +32,7 @@
           starting point but is not a compliant privacy policy. It has not been
           checked against GDPR, CCPA, or anything else. Replace it before the
           game accepts a single real account.
-          Tracked as <code>T-0.10</code> in <code>ROADMAP.md</code>.
+          Tracked as <code>T-14.12</code> in <code>ROADMAP.md</code>.
         </p>
 
         <h2>What we collect</h2>
@@ -41,6 +41,18 @@
           argon2 hash, never in plain text. Your game state: farm, plots,
           animals, inventory, gold, and trade history. Security events such as
           failed sign-ins, including the originating IP address.
+        </p>
+        <p>
+          Two timestamps about the account itself: when the account was created,
+          and when it was last active. The second is what lets an idle farm be
+          simulated from the moment you left, and it is the only behavioural
+          record kept about when you play.
+        </p>
+        <p>
+          Your character's appearance — skin, eyes, hair and clothing colours —
+          if you have chosen one. It is cosmetic, it is not shown to other
+          players, and it is stored because the character has to look the same
+          next time you sign in.
         </p>
 
         <h2>What we do not collect</h2>
@@ -56,6 +68,11 @@
           own checkout and never touch our servers. We store the Stripe session
           and payment identifiers, the amount, the currency, and the status, so
           that purchases can be reconciled and supported.
+        </p>
+        <p>
+          If a purchase is refunded or charged back we record when, because that
+          is what revokes VIP and flags the account. A refund therefore does not
+          erase the purchase record; it adds to it.
         </p>
 
         <h2>Cookies</h2>
@@ -91,6 +108,7 @@
         <nav class="sitefoot__links mono">
           <a href="/">Home</a>
           <a href="/terms">Terms</a>
+          <a href="/credits">Credits</a>
         </nav>
       </div>
     </footer>

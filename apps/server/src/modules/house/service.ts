@@ -8,6 +8,7 @@ import {
   overlaps,
   type FurnitureDef,
 } from '@tillhaven/shared';
+import { checkInteriorReachable, type InteriorPlacement } from './reachability.js';
 import { schema } from '../../db/client.js';
 import type { Queryable, Tx } from '../../db/tx.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
@@ -205,6 +206,38 @@ async function takeOwned(tx: Tx, playerId: string, furnitureId: string): Promise
  * the overlap check mean something: without it two simultaneous placements could
  * each read an empty cell and both take it.
  */
+/**
+ * Serialises everything this player does to their own room (T-18.28).
+ *
+ * **`lockPlacements` below cannot do this, and that is the bug it fixes.**
+ * `SELECT … FOR UPDATE` locks the rows it RETURNS — so an empty room, or a room
+ * whose pieces are all elsewhere, returns nothing and locks nothing. Two
+ * concurrent placements then both read "that cell is free", both pass
+ * `assertPlaceable`, and both insert: two pieces on one cell, which every other
+ * part of this module is written on the assumption cannot happen. A phantom
+ * read, not a lost update, which is why row locks on the placements were never
+ * going to be enough.
+ *
+ * `house.integration.test.ts`'s own "cannot be raced" test caught it —
+ * intermittently, with BOTH requests returning 200 — and being intermittent is
+ * what let it read as a flake for as long as it did.
+ *
+ * Locking the PLAYER row is the same tool `trade/service.ts` uses to serialise
+ * two parties (`lockPlayers`), applied to one. It is the standard answer to a
+ * phantom: lock a row that always exists, so there is always something to
+ * queue on.
+ *
+ * Taken FIRST in every mutating path, before any read the decision depends on.
+ * A lock taken after the read it is meant to protect protects nothing.
+ */
+async function lockRoom(tx: Tx, playerId: string): Promise<void> {
+  await tx
+    .select({ id: schema.players.id })
+    .from(schema.players)
+    .where(eq(schema.players.id, playerId))
+    .for('update');
+}
+
 async function lockPlacements(tx: Tx, playerId: string, excludeId?: string) {
   const where = excludeId
     ? and(
@@ -258,6 +291,33 @@ function assertPlaceable(
       });
     }
   }
+
+  /*
+   * Last, because it is the only check that has to look at the whole room
+   * (T-18.08). Furniture became SOLID, so a placement can now wall the player
+   * away from the door or wall a piece away from the player — and the only way
+   * to remove a piece is to walk up to it. Skipped entirely for a flat piece: a
+   * rug you walk over cannot cut anything off.
+   */
+  if (def.flat) return;
+
+  const room: InteriorPlacement[] = [{ def, x, y, label: def.name }];
+  for (const other of existing) {
+    const otherDef = getFurniture(other.furnitureId);
+    if (!otherDef) continue;
+    room.push({ def: otherDef, x: other.x, y: other.y, label: otherDef.name });
+  }
+
+  const reach = checkInteriorReachable(room);
+  if (!reach.ok) {
+    throw new GameError(
+      ErrorCode.FURNITURE_BLOCKS_ROOM,
+      'That would box something in. Leave a way around it.',
+      // Joined rather than an array: the details bag is flat scalars, and
+      // the client shows this as one sentence anyway.
+      { unreachable: reach.unreachable.join(', ') },
+    );
+  }
 }
 
 export async function placeFurniture(
@@ -269,6 +329,8 @@ export async function placeFurniture(
   now: number,
 ): Promise<PlacedFurniture> {
   const def = defOf(furnitureId);
+  // Before the read the decision rests on (T-18.28).
+  await lockRoom(tx, player.id);
   const existing = await lockPlacements(tx, player.id);
 
   assertPlaceable(def, x, y, existing);
@@ -298,6 +360,9 @@ export async function moveFurniture(
   x: number,
   y: number,
 ): Promise<PlacedFurniture> {
+  // A move is a placement (T-18.28): same phantom, same lock, taken first.
+  await lockRoom(tx, player.id);
+
   const rows = await tx
     .select({
       id: schema.furniturePlacements.id,

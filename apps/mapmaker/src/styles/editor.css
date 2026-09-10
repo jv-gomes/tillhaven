@@ -337,3 +337,117 @@ details summary {
   color: var(--ink-dim);
   padding: 4px 0;
 }
+
+/*
+ * The animation frame strip.
+ *
+ * Horizontal and scrolling rather than wrapping: the order IS the animation, and
+ * a wrapped strip reads as two rows of unrelated tiles. Scrolling keeps "frame 4
+ * comes after frame 3" true at any length.
+ */
+.anim-preview {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 0;
+}
+
+.anim-frame {
+  margin: 0;
+  flex: none;
+  text-align: center;
+}
+
+.anim-frame__art {
+  display: block;
+  /* Whole-number scale only, per the asset rules — a fractional scale on 16px
+     art resamples it into mush whatever `image-rendering` says. */
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.anim-frame figcaption {
+  font-size: 10px;
+  color: var(--ink-dim);
+  padding-top: 2px;
+}
+
+/*
+ * The editable strip.
+ *
+ * The remove control sits ON the frame rather than under it: a row of × buttons
+ * below the art doubles the strip's height and puts the control further from the
+ * thing it acts on than the neighbouring frame is.
+ */
+.anim-frame[draggable='true'] {
+  position: relative;
+  cursor: grab;
+}
+.anim-frame.drag-over {
+  outline: 1px solid var(--accent);
+}
+.anim-frame__remove {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  line-height: 12px;
+  font-size: 11px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 80ms linear;
+}
+/* Revealed on hover OR focus — keyboard users get no hover, and a control that
+   exists only under the pointer is a control they cannot reach at all. */
+.anim-frame:hover .anim-frame__remove,
+.anim-frame__remove:focus-visible {
+  opacity: 1;
+}
+.anim-frame__art--missing {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/*
+ * The live preview, beside the notes rather than in the strip.
+ *
+ * Authoring is the case where a static strip is not enough — only playback
+ * shows whether a loop stutters at the seam. It is deliberately a separate box:
+ * the strip stays still, because a strip that never settles is one you cannot
+ * read while you work.
+ */
+.anim-play-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.anim-play {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 68px;
+  min-height: 68px;
+  background: var(--panel-2);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+.anim-play-row .hint {
+  margin: 0;
+}
+
+.hint.err {
+  color: var(--danger);
+}
+.hint.warn {
+  color: var(--accent-2);
+}
+

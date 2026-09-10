@@ -1,0 +1,1172 @@
+/*
+ * The pack's own UI, as reusable primitives (Phase U).
+ *
+ * Imported BEFORE `hud.css`, on purpose: this file owns *chrome* — frames,
+ * plates, wells, bars, type — and `hud.css` owns *layout*. Equal specificity
+ * means the later file wins any overlap, so a panel that still wants a special
+ * case can simply say so in `hud.css` and get it.
+ *
+ * ------------------------------------------------------------------
+ * Why nine-slice works here when it did not before
+ * ------------------------------------------------------------------
+ *
+ * `hud.css` carried this for three phases:
+ *
+ *   > The pack's plate WAS tried as a `border-image` 9-slice and does not work
+ *   > … the plate is a 48x16 region at (0,16) of an 848x544 sheet, so a 5px
+ *   > slice takes pixels from four unrelated corners of the sheet.
+ *
+ * That is exactly right, and it is a fact about the FILE, not about the art.
+ * `border-image` slices from the source image's own outer edges, so a frame
+ * that is a sub-region of an atlas cannot be sliced where it sits. Phase U gave
+ * each frame its own file (`scripts/lib/ui-crops.mjs` cuts them, and
+ * `prepare-assets.mjs` verifies every cut by decoding it back), and the
+ * objection evaporates.
+ *
+ * ------------------------------------------------------------------
+ * Every number in this file is measured
+ * ------------------------------------------------------------------
+ *
+ * The `border-image-slice` values are not eyeballed. Each one is the distance
+ * from the frame's edge to the first pair of identical adjacent rows/columns —
+ * the definition of where stretching is lossless — computed by
+ * `scripts/measure-ui.mjs` and recorded in `docs/ui-measurements.md`.
+ * `styles/uiSlices.test.ts` reads the crop table and this stylesheet and fails
+ * if they drift, so there is one source of truth and it is not this file.
+ *
+ * ------------------------------------------------------------------
+ * Integer scaling, everywhere
+ * ------------------------------------------------------------------
+ *
+ * `--ui-scale` is a whole number and must stay one. `lib/sprite.ts` already
+ * throws on a fractional sprite scale ("Sprite scale must be a positive
+ * integer"); the same rule applies to frames, because a 6px corner drawn at
+ * 2.5x lands on half pixels and the outline goes soft in exactly the place the
+ * eye checks first. `image-rendering: pixelated` keeps the enlargement
+ * nearest-neighbour rather than smeared.
+ */
+
+/* ------------------------------------------------------------------ *
+ * Typeface
+ *
+ * The pack ships no font — `hud.css` recorded that adding one "would mean a
+ * second licence in ATTRIBUTION.md for a decision nobody has taken yet". Phase
+ * U took the decision. Both faces are SIL OFL 1.1 and SELF-HOSTED from
+ * `public/fonts/`: a <link> to Google would leak every player's IP to a third
+ * party and put a render-blocking third-party request in front of the game.
+ * See `public/fonts/README.md` for the obligations that come with the licence.
+ * ------------------------------------------------------------------ */
+
+/*
+ * Pixelify Sans — body, headings, numbers. A variable face, so one file covers
+ * 400 through 700 and the HUD's bold labels cost no extra request.
+ */
+@font-face {
+  font-family: 'Pixelify Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/pixelify-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Pixelify Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/pixelify-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/*
+ * Silkscreen — the small uppercase labels. This is what `var(--mono)` at
+ * `letter-spacing: 0.14em; text-transform: uppercase` had been impersonating
+ * for eleven panels; Silkscreen is the real thing and needs no letter-spacing
+ * hack, because the spacing is drawn into the face.
+ */
+@font-face {
+  font-family: 'Silkscreen';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/silkscreen-400-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Silkscreen';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/silkscreen-400-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Silkscreen';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/silkscreen-700-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Silkscreen';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/silkscreen-700-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Tokens
+ * ------------------------------------------------------------------ */
+
+.hud,
+.ui-scope {
+  /*
+   * **Whole numbers only.** See the header — a fractional scale puts the
+   * frame's corner on half pixels and softens the outline.
+   */
+  --ui-scale: 3;
+  /* Buttons are small; a 3x plate would be 48px tall before any text. */
+  --ui-scale-plate: 2;
+
+  --pixel: 'Pixelify Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --pixel-label: 'Silkscreen', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /*
+   * Type sizes in PX, not REM, and that is a change from `hud.css`.
+   *
+   * A pixel face is drawn on a fixed grid — Silkscreen on 8, Pixelify Sans on
+   * 10 — and renders crisply only at integer multiples of it. `0.82rem` is
+   * 13.12px, which lands the stems between device pixels and gives back the
+   * softness the whole reskin is trying to remove. These are the multiples
+   * that stay sharp.
+   */
+  --t-label: 12px; /* Silkscreen, uppercase chrome */
+  --t-label-sm: 10px;
+  --t-body: 16px; /* Pixelify Sans, prose and lists */
+  --t-body-sm: 14px;
+  --t-title: 20px;
+  --t-num: 18px; /* gold, counts, the numbers a player reads at a glance */
+
+  /*
+   * The interior of a framed panel — the tan the pack paints inside its own
+   * timber, sampled off `Clock/Extras.png`'s inset plaque and the dialogue
+   * box's fill (it was already in this codebase as `--dlg-fill`).
+   *
+   * **It is 6% darker than `--paper`, and that cost three tokens.** Muted text
+   * on it measured 4.29:1 where the audited requirement is 4.5, so `--faint`,
+   * `--barn` and `--grass-deep` are each darkened 4-7% in `hud.css` to clear AA
+   * on tan as well as on paper. That is the same trade T-27.01 made when it
+   * darkened `--barn` by 4.5%, for the same reason, and `contrast.test.ts`
+   * checks both surfaces now rather than only `--paper`.
+   */
+  --panel-fill: #ffd2a1;
+
+  /*
+   * The timber board's own dark, sampled from `ui-rail.png`'s trough.
+   *
+   * **A token because this surface has now caused the same bug three times.**
+   * Anything sitting on the plank — panel headers, the status cluster, the
+   * hotbar, bar troughs — inherits `--ink` unless told otherwise, and ink on
+   * timber measures **1.13:1**. That is not "low contrast", it is invisible
+   * text, and it shipped three times in this phase: the goal-board tab, the
+   * thirsty badge, and the energy fraction. `contrast.test.ts` checks this
+   * surface now, so the fourth one fails a test instead of a screenshot.
+   */
+  --timber: #32131e;
+
+  /*
+   * The left rail's footprint (Phase U2).
+   *
+   * Declared as tokens because two panels are anchored to the left edge and
+   * must clear it — `.board` and `.hud__decor` were both `left: 1rem`, which
+   * put them directly under the rail the moment it existed, and the goal board
+   * silently swallowed every click meant for a rail button. A shared token is
+   * what stops the next left-anchored panel repeating it.
+   */
+  /*
+   * **One number.** `--rail-btn` is declared on the HUD root, not on the button,
+   * precisely so `--rail-clear` can read it: custom properties inherit
+   * downward, so a value declared on `.hud__btn--icon` is invisible to `.hud`
+   * and the two would have to be kept in step by hand. Shrinking the rail on a
+   * short viewport is then one line (see the media query in `hud.css`), and the
+   * panels move with it automatically.
+   */
+  --rail-btn: 2.75rem;
+  --rail-gap: 0.75rem;
+  /** Where a left-anchored panel may start. */
+  --rail-clear: calc(var(--rail-btn) + var(--rail-gap) * 2);
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Nine-slice frames
+ *
+ * `border-image-slice: <n> fill` — `fill` is what paints the middle region;
+ * without it the frame is a hollow ring and the panel behind it shows through.
+ * `border-image-width` is left at its default of 1, meaning "one times
+ * border-width", so the border-width line below is the only place the scale
+ * appears.
+ * ------------------------------------------------------------------ */
+
+.ui-panel,
+.ui-rail,
+.ui-slot,
+.ui-dialogue,
+.ui-plate {
+  border-style: solid;
+  border-image-repeat: stretch;
+  /* Nearest-neighbour, or a 6px corner upscaled 3x turns to mush. */
+  image-rendering: pixelated;
+  /* The pack's frames are square-cornered pixel art; a radius would clip them. */
+  border-radius: 0;
+  background-clip: padding-box;
+}
+
+/*
+ * THE panel frame. Measured slice 6 on all four sides — the only frame in the
+ * pack that is symmetric, which is why every window uses it: anything
+ * asymmetric develops a visible bias when stretched to panels of different
+ * shapes, and the HUD has panels from 180px to 640px wide.
+ */
+.ui-panel {
+  border-width: calc(6px * var(--ui-scale));
+  border-image-source: url('/assets/ui-panel.png');
+  border-image-slice: 6 fill;
+}
+
+/*
+ * **There is no `.ui-well` primitive, and the absence is deliberate.**
+ *
+ * `ui-well.png` is cut and shipped, and it looks like exactly what an inset
+ * panel needs: a frame with a transparent middle. It cannot be nine-sliced.
+ * Its measured inset is 4 — the distance to the first repeating row, which is
+ * the number that makes stretching lossless — but the frame's body is 16px
+ * thick, so slicing at 4 puts the transparent hole inside the stretched middle
+ * band and the element renders as four detached corner fragments.
+ *
+ * The inset that makes art sliceable and the inset that makes it a frame are
+ * different numbers, and nothing in the measurement can tell them apart. A
+ * class here would be a loaded gun: it would look like the obvious choice for
+ * every inset panel anyone adds later, and it would be wrong every time. The
+ * crop stays in the table for whoever finds a use that does not stretch it.
+ */
+
+/*
+ * The dark rail: panel headers and the HUD strip. Asymmetric on purpose — the
+ * art is lit from above, so the measured top inset (10) is twice the bottom (5)
+ * and the highlight stays on top at any height.
+ */
+.ui-rail {
+  border-width: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale))
+    calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-rail.png');
+  border-image-slice: 10 8 5 8 fill;
+}
+
+/*
+ * Inventory cell. The pack's orange square, which is `--soil` — the kit's cream
+ * cell was tried and vanishes against a cream panel (see `ui-crops.mjs`).
+ */
+.ui-slot {
+  border-width: calc(2px * var(--ui-scale));
+  border-image-source: url('/assets/ui-slot.png');
+  border-image-slice: 2 fill;
+}
+
+/* The lit twin. A source swap, not a filter — the pack drew both states. */
+.ui-slot--lit {
+  border-image-source: url('/assets/ui-slot-lit.png');
+}
+
+/*
+ * The scalloped box: dialogue and tooltips.
+ *
+ * `round` rather than `stretch`, and it is the one place that matters. The edge
+ * is a repeating scallop; stretching it turns evenly-spaced bumps into a few
+ * wide smears, which is visible at a glance. `round` rescales the tile so a
+ * whole number fits, keeping the rhythm.
+ */
+.ui-dialogue {
+  border-width: calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-dialogue.png');
+  border-image-slice: 5 fill;
+  border-image-repeat: round;
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Buttons
+ *
+ * Eleven colour families, each with an up and a pressed plate. `--plate` names
+ * the family; nothing else changes.
+ *
+ * **The pressed plate is 15px tall, not 16** — the art drops the button by a
+ * pixel rather than redrawing it. So `:active` swaps the source, narrows the
+ * bottom border from 5 to 4, and nudges the element down 1px. Faking the press
+ * with a transform would fight art that already contains the press.
+ * ------------------------------------------------------------------ */
+
+.ui-plate {
+  --plate: rust;
+  --plate-src: url('/assets/ui-plate-rust.png');
+  --plate-src-down: url('/assets/ui-plate-rust-down.png');
+
+  border-width: calc(3px * var(--ui-scale-plate)) calc(3px * var(--ui-scale-plate))
+    calc(5px * var(--ui-scale-plate));
+  border-image-source: var(--plate-src);
+  border-image-slice: 3 3 5 3 fill;
+
+  padding: 0 calc(2px * var(--ui-scale-plate));
+  min-height: calc(16px * var(--ui-scale-plate));
+  background: none;
+  color: var(--paper, #f7dbc6);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 400;
+  /* Silkscreen has the spacing drawn in; the old 0.14em tracking double-spaces it. */
+  letter-spacing: 0;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+}
+
+.ui-plate:active:not(:disabled),
+.ui-plate[aria-pressed='true'] {
+  border-bottom-width: calc(4px * var(--ui-scale-plate));
+  border-image-source: var(--plate-src-down);
+  border-image-slice: 3 3 4 3 fill;
+  /* The art is a pixel shorter; move with it rather than letting the box jump. */
+  transform: translateY(1px);
+}
+
+.ui-plate:disabled {
+  cursor: not-allowed;
+  /* Fade the plate, not just the label, or a disabled button still looks live. */
+  opacity: 0.55;
+}
+
+/*
+ * The families. Dark plates take `--paper` text, light plates take `--ink`;
+ * the split is measured contrast, not taste — `styles/contrast.test.ts` pins
+ * the ratios, and the four light families fail AA against cream text.
+ */
+.ui-plate--rust {
+  --plate-src: url('/assets/ui-plate-rust.png');
+  --plate-src-down: url('/assets/ui-plate-rust-down.png');
+}
+.ui-plate--soil {
+  --plate-src: url('/assets/ui-plate-soil.png');
+  --plate-src-down: url('/assets/ui-plate-soil-down.png');
+}
+.ui-plate--cyan {
+  --plate-src: url('/assets/ui-plate-cyan.png');
+  --plate-src-down: url('/assets/ui-plate-cyan-down.png');
+}
+.ui-plate--pink {
+  --plate-src: url('/assets/ui-plate-pink.png');
+  --plate-src-down: url('/assets/ui-plate-pink-down.png');
+}
+
+.ui-plate--sand,
+.ui-plate--moss,
+.ui-plate--lime,
+.ui-plate--blush,
+.ui-plate--amber,
+.ui-plate--honey,
+.ui-plate--clay {
+  color: var(--ink, #1c0a18);
+}
+
+.ui-plate--sand {
+  --plate-src: url('/assets/ui-plate-sand.png');
+  --plate-src-down: url('/assets/ui-plate-sand-down.png');
+}
+.ui-plate--moss {
+  --plate-src: url('/assets/ui-plate-moss.png');
+  --plate-src-down: url('/assets/ui-plate-moss-down.png');
+}
+.ui-plate--lime {
+  --plate-src: url('/assets/ui-plate-lime.png');
+  --plate-src-down: url('/assets/ui-plate-lime-down.png');
+}
+.ui-plate--blush {
+  --plate-src: url('/assets/ui-plate-blush.png');
+  --plate-src-down: url('/assets/ui-plate-blush-down.png');
+}
+.ui-plate--amber {
+  --plate-src: url('/assets/ui-plate-amber.png');
+  --plate-src-down: url('/assets/ui-plate-amber-down.png');
+}
+.ui-plate--honey {
+  --plate-src: url('/assets/ui-plate-honey.png');
+  --plate-src-down: url('/assets/ui-plate-honey-down.png');
+}
+.ui-plate--clay {
+  --plate-src: url('/assets/ui-plate-clay.png');
+  --plate-src-down: url('/assets/ui-plate-clay-down.png');
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Selection and focus
+ *
+ * Two 42x42 bracket frames with transparent middles, so they OVERLAY a cell
+ * rather than replacing it — selection and contents stay separate layers, and
+ * a selected slot still shows its item and its own frame underneath.
+ * ------------------------------------------------------------------ */
+
+.ui-select::after,
+.ui-focusring::after {
+  content: '';
+  position: absolute;
+  /* Bleed past the cell so the brackets sit outside its border, not on it. */
+  inset: calc(-2px * var(--ui-scale));
+  pointer-events: none;
+  border-style: solid;
+  border-width: calc(5px * var(--ui-scale));
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+/*
+ * Source and slice are repeated in both rules rather than hoisted into the
+ * shared block above. One duplicated line buys coverage: `uiSlices.test.ts`
+ * only checks a block that declares BOTH, so a hoisted slice would leave these
+ * two frames unverified — and they are the two that overlay other art, where a
+ * wrong inset is hardest to spot.
+ */
+.ui-select::after {
+  border-image-source: url('/assets/ui-select.png');
+  border-image-slice: 5 fill;
+}
+
+/* Dashed — keyboard focus, deliberately distinct from selection. */
+.ui-focusring::after {
+  border-image-source: url('/assets/ui-focus.png');
+  border-image-slice: 5 fill;
+}
+
+/*
+ * Focus is drawn with the pack's own dashed frame, but ONLY for
+ * `:focus-visible` — a mouse click on a slot should not leave a ring behind.
+ * The browser default outline is replaced, not removed: there is always a
+ * visible focus indicator.
+ */
+:where(.ui-slot, .ui-plate):focus-visible {
+  outline: calc(1px * var(--ui-scale)) solid var(--ink, #1c0a18);
+  outline-offset: calc(1px * var(--ui-scale));
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Bars
+ *
+ * From `ui-bars.png` (192x160), which the pack always had and nothing copied.
+ * `assets.ts` even pointed at it — "the energy bar and the clock therefore take
+ * their look from `UI/Bars.png`" — and then the file was never brought over, so
+ * the energy bar shipped as a hand-written three-stop CSS gradient.
+ *
+ * Measured bands: the horizontal tracks sit at y101-109 and y116-124 (9px
+ * tall), and the thin progress bars at y134-137 and y150-153 (4px).
+ * ------------------------------------------------------------------ */
+
+.ui-bar {
+  position: relative;
+  height: calc(9px * var(--ui-scale));
+  background-image: url('/assets/ui-bars.png');
+  /* 192 source px wide, scaled as one piece so the end caps stay square. */
+  background-size: calc(192px * var(--ui-scale)) calc(160px * var(--ui-scale));
+  background-position: calc(-3px * var(--ui-scale)) calc(-101px * var(--ui-scale));
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  overflow: hidden;
+}
+
+.ui-bar__fill {
+  height: 100%;
+  background-image: url('/assets/ui-bars.png');
+  background-size: calc(192px * var(--ui-scale)) calc(160px * var(--ui-scale));
+  /* The filled variant of the same track, one band lower. */
+  background-position: calc(-3px * var(--ui-scale)) calc(-116px * var(--ui-scale));
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  transition: width 200ms steps(8);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-bar__fill {
+    transition: none;
+  }
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Tags and badges
+ *
+ * `ui-tags.png` is a 12x8 grid of 32x32 pill tags and ribbons. The pack has no
+ * dedicated tab widget; these are what it offers instead, and they are what the
+ * shop and trade tabs now wear.
+ * ------------------------------------------------------------------ */
+
+.ui-tag {
+  --tag-src: url('/assets/ui-tag-grey.png');
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /*
+   * Height is PINNED to the source pill, not left to the content.
+   *
+   * The measured insets are `0 4 0 5` — no top or bottom slice, because the
+   * capsule's top and bottom edges are flat. That makes it stretch to any label
+   * width losslessly, and makes stretching it VERTICALLY distort the shading
+   * inside it. So the width flexes and the height does not.
+   */
+  height: calc(27px * var(--ui-scale-tag, 1));
+  min-width: calc(27px * var(--ui-scale-tag, 1));
+  padding: 0 calc(4px * var(--ui-scale-tag, 1));
+  border-style: solid;
+  border-width: 0 calc(4px * var(--ui-scale-tag, 1)) 0 calc(5px * var(--ui-scale-tag, 1));
+  border-image-source: var(--tag-src);
+  border-image-slice: 0 4 0 5 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  font-family: var(--pixel-label);
+  font-size: var(--t-label-sm);
+  /* Every pill in the set is a light fill; ink is the only legible choice. */
+  color: var(--ink, #1c0a18);
+}
+
+.ui-tag--red {
+  --tag-src: url('/assets/ui-tag-red.png');
+}
+.ui-tag--pink {
+  --tag-src: url('/assets/ui-tag-pink.png');
+}
+.ui-tag--cyan {
+  --tag-src: url('/assets/ui-tag-cyan.png');
+}
+.ui-tag--honey {
+  --tag-src: url('/assets/ui-tag-honey.png');
+}
+.ui-tag--green {
+  --tag-src: url('/assets/ui-tag-green.png');
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Icons
+ *
+ * `ui-button.png` holds a 43-column vocabulary of 16x16 icon buttons in every
+ * plate colour and both states: pause, play, arrows, X, check, star, heart,
+ * bag, lock, mail, +, -, refresh, list. The bare (plateless) row is y0-15,
+ * which is the row an icon-on-its-own wants.
+ *
+ * Addressed by cell rather than cropped: there are hundreds, and cutting each
+ * to its own file would trade 2 KB of atlas for 400 requests.
+ * ------------------------------------------------------------------ */
+
+.ui-icon {
+  display: inline-block;
+  width: calc(16px * var(--ui-icon-scale, 2));
+  height: calc(16px * var(--ui-icon-scale, 2));
+  background-image: url('/assets/ui-button.png');
+  background-size: calc(848px * var(--ui-icon-scale, 2))
+    calc(544px * var(--ui-icon-scale, 2));
+  background-repeat: no-repeat;
+  /* Cell (col, row) into the 16px grid; x starts at 160, the icon region. */
+  background-position: calc(-1px * (160 + 16 * var(--icon-col, 0)) * var(--ui-icon-scale, 2))
+    calc(-1px * (16 * var(--icon-row, 0)) * var(--ui-icon-scale, 2));
+  image-rendering: pixelated;
+  flex: none;
+}
+
+
+/* ==================================================================== *
+ * APPLIED
+ *
+ * The HUD's own class names, wearing the primitives above.
+ *
+ * **Why here and not in `hud.css`.** This file owns chrome; `hud.css` owns
+ * layout. Phase U deleted 113 chrome declarations from `hud.css` — the
+ * `background: var(--paper)` / `border: 3px solid var(--ink)` /
+ * `box-shadow: 6px 6px 0` triple that every panel repeated — so there is
+ * nothing left there to conflict with, and the frames live in one place
+ * instead of thirty-eight.
+ *
+ * Grouping by treatment rather than by panel is the point: every window in the
+ * game is one rule, so they cannot drift apart, which is exactly how the old
+ * file ended up with three slightly different shades of the same idea.
+ * ==================================================================== */
+
+/*
+ * Windows: a TIMBER RING with a warm interior.
+ *
+ * **This is the design reference's grammar, and the trick that makes it
+ * possible is dropping `fill`.** With `fill`, `border-image` paints the source
+ * image's middle region into the box — for `ui-rail.png` that is the dark
+ * plank, which gives a black panel. Without it, the middle is left alone and
+ * the element's own `background` shows through the ring. So one asset yields
+ * both a dark bar (with `fill`, below) and a framed light panel (without),
+ * which is exactly the pair the reference uses.
+ *
+ * The alternative was `ui-panel.png`, the pack's cream rounded frame. It is
+ * good and it is what this phase shipped first, but it reads as paper, and the
+ * reference is carpentry: dark timber, light inset. Both are kept — the cream
+ * frame is still the tooltip and toast material.
+ */
+.shop,
+.pack,
+.trade,
+.shipping,
+.idle__panel,
+.board,
+.creator__card,
+.hud__decor {
+  /*
+   * 2x, not the 3x the HUD defaults to. At 3x the frame is 30px of timber on
+   * every side of a 520px panel, which is a picture frame with a shop in it.
+   * 2x is 20px and still reads as chunky carpentry at 1600px wide.
+   */
+  --ui-scale: 2;
+
+  border-style: solid;
+  border-width: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale))
+    calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-rail.png');
+  /* No `fill` — see above. The interior is the background below. */
+  border-image-slice: 10 8 5 8;
+  border-image-repeat: stretch;
+  background: var(--panel-fill);
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+
+/*
+ * Small floating things: the same frame at 2x, because an 18px border on a
+ * 200px toast is a frame with a message in it rather than the other way round.
+ */
+.toast,
+.idle__banner {
+  --ui-scale: 2;
+
+  border-style: solid;
+  border-width: calc(6px * var(--ui-scale));
+  border-image-source: url('/assets/ui-panel.png');
+  border-image-slice: 6 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+
+/*
+ * Goal rows take the same timber ring at 1x.
+ *
+ * `ui-well.png` was tried here first and renders as detached corner fragments —
+ * see the note where the `.ui-well` primitive would have been, above.
+ */
+.goalrow {
+  --ui-scale: 1;
+
+  border-style: solid;
+  border-width: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale))
+    calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-rail.png');
+  border-image-slice: 10 8 5 8;
+  border-image-repeat: stretch;
+  background: var(--panel-fill);
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+
+/*
+ * The hotbar is a PLANK — the reference's single clearest element. Same timber,
+ * this time WITH `fill`, so the dark board shows behind the cells rather than a
+ * light panel.
+ */
+.hotbar {
+  --ui-scale: 2;
+
+  border-style: solid;
+  border-width: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale))
+    calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-rail.png');
+  border-image-slice: 10 8 5 8 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/*
+ * Panel headers and the top bar: the same board WITH `fill`, so a window reads
+ * as timber all the way up and the HUD strip matches the panels it opens.
+ */
+.shop__head,
+.pack__head,
+.trade__head,
+.shipping__head,
+.board__head,
+.idle__head,
+.hud__status {
+  border-style: solid;
+  border-width: calc(10px * var(--ui-scale-head, 1)) calc(8px * var(--ui-scale-head, 1))
+    calc(5px * var(--ui-scale-head, 1));
+  border-image-source: url('/assets/ui-rail.png');
+  border-image-slice: 10 8 5 8 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+  color: var(--paper);
+}
+
+/*
+ * Cream text on the dark board, everywhere inside a header. The panels declared
+ * their own header colours before — `var(--page)`, `var(--paper)`, and one that
+ * inherited `--ink` and would now be near-black on near-black.
+ */
+:where(.shop__head, .pack__head, .trade__head, .shipping__head, .board__head, .idle__head) :where(h2, h3, p, span, button) {
+  color: var(--paper);
+}
+
+/*
+ * Tabs are NOT restyled here. `.board__tab` and `.shop__tab` both live in
+ * `hud.css`, which loads second and wins, so a copy in this file would be dead
+ * code that looks authoritative — the worst kind. The one change the timber
+ * header forced (ink text to cream) is made where the rule actually is.
+ */
+
+/* The merchant speaks in the scalloped box. */
+.dialogue {
+  border-style: solid;
+  border-width: calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-dialogue.png');
+  border-image-slice: 5 fill;
+  border-image-repeat: round;
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+
+/*
+ * The sleep banner keeps the dark rail rather than the cream panel — it is the
+ * one piece of HUD that appears when the screen has gone to night, and a bright
+ * panel over a dark farm is the thing it was introduced to avoid.
+ */
+.hud__sleep {
+  --ui-scale: 2;
+
+  border-style: solid;
+  border-width: calc(10px * var(--ui-scale)) calc(8px * var(--ui-scale))
+    calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-rail.png');
+  border-image-slice: 10 8 5 8 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+  color: var(--paper);
+}
+
+/*
+ * Sunken wells: the character stage and the trade sides sit INSIDE the panel.
+ *
+ * Not `ui-well.png` — see the note where the `.ui-well` primitive would have
+ * been. A plain recessed edge is honest and correct; the pack has no
+ * inset-panel art that survives being stretched.
+ */
+.creator__stage,
+.trade__side {
+  border: calc(2px * var(--ui-scale-well, 1)) solid var(--frame);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: inset 0 calc(2px * var(--ui-scale-well, 1)) 0 rgba(74, 33, 35, 0.22);
+}
+
+/*
+ * Bars: a dark track with a flat pack-palette fill.
+ *
+ * **The pack's own bar art was measured and deliberately not used, which is
+ * worth recording because the plan called for it.** `Bars.png` holds four
+ * horizontal tracks at y101-109 and y116-124, and every one of them is a
+ * FINISHED bar: baked-in round end caps, a star ornament at the left, and a
+ * fill already painted to a fixed percentage. That is art for a bar of one
+ * width at one value. An HTML bar is a track of arbitrary width with a fill of
+ * arbitrary length, and there is no slicing of a baked cap-and-star that
+ * survives being 40% full at 96px and 100% full at 64px — the cap either
+ * duplicates, stretches, or clips.
+ *
+ * So the bars take the pack's COLOURS, which is the part that carries: the
+ * energy cyan #2eafc7 and the frame browns are lifted straight off those same
+ * tracks. The previous energy bar was a three-stop CSS gradient in colours
+ * belonging to nothing, which is the actual thing that looked wrong.
+ */
+.hud__xpbar,
+.hud__energybar,
+.goalrow__bar {
+  border: calc(1px * var(--ui-scale)) solid var(--ink);
+  border-radius: 0;
+  /* The dark trough, sampled from the tracks in `Bars.png`. */
+  background: var(--timber);
+  box-shadow: inset 0 calc(1px * var(--ui-scale)) 0 rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+/* Inventory, chest and hotbar cells. */
+.slot,
+.hotbar__slot {
+  border-style: solid;
+  border-width: calc(2px * var(--ui-scale));
+  border-image-source: url('/assets/ui-slot.png');
+  border-image-slice: 2 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+}
+
+/*
+ * Hover and selection swap to the pack's LIT square rather than filtering the
+ * unlit one. `assets.ts` measured the pair as "the same square lit and unlit",
+ * so the artist already drew this state — brightening the dark one would be
+ * inventing a third.
+ */
+.slot:hover:not(.is-empty),
+.slot.is-over,
+.hotbar__slot:hover:not(.is-selected),
+.hotbar__slot.is-selected {
+  border-image-source: url('/assets/ui-slot-lit.png');
+}
+
+/* The slot waiting for a destination. Loud on purpose: an easily-lost pick-up
+   turns into an accidental swap. */
+.slot.is-picked {
+  border-image-source: url('/assets/ui-slot-lit.png');
+  filter: brightness(1.2) saturate(1.3);
+}
+
+/*
+ * The selected hotbar slot gets the pack's bracket frame, overlaid.
+ *
+ * This is what `ui-select.png` is for: a transparent middle, so the brackets
+ * sit OVER the cell without replacing its frame or hiding its item. The old
+ * `outline: 3px solid var(--paper-raised)` was a cream rectangle doing the same
+ * job with none of the art.
+ */
+.hotbar__slot {
+  position: relative;
+}
+
+.hotbar__slot.is-selected::after {
+  content: '';
+  position: absolute;
+  inset: calc(-2px * var(--ui-scale));
+  pointer-events: none;
+  border-style: solid;
+  border-width: calc(5px * var(--ui-scale));
+  border-image-source: url('/assets/ui-select.png');
+  border-image-slice: 5 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+}
+
+/* Bar buttons, and every close/confirm/claim button in every panel. */
+.hud__btn,
+.shop__close,
+.pack__close,
+.trade__close,
+.shipping__close,
+.board__close,
+.idle__close,
+.shoprow__btn,
+.shiprow__btn,
+.decorrow__btn,
+.trade__btn,
+.creator__btn,
+.goalrow__claim,
+.idle__stop,
+.touch__act {
+  --plate-src: url('/assets/ui-plate-rust.png');
+  --plate-src-down: url('/assets/ui-plate-rust-down.png');
+
+  border-style: solid;
+  border-width: calc(3px * var(--ui-scale-plate)) calc(3px * var(--ui-scale-plate))
+    calc(5px * var(--ui-scale-plate));
+  border-image-source: var(--plate-src);
+  border-image-slice: 3 3 5 3 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+
+  padding: 0 calc(3px * var(--ui-scale-plate));
+  min-height: calc(16px * var(--ui-scale-plate));
+  background: none;
+  color: var(--paper);
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  font-weight: 400;
+  /* Silkscreen draws its own spacing; the old 0.1em tracking double-spaces it. */
+  letter-spacing: 0;
+  text-transform: uppercase;
+  text-shadow: none;
+  cursor: pointer;
+}
+
+.hud__btn:active:not(:disabled),
+.shop__close:active,
+.pack__close:active,
+.trade__close:active,
+.shipping__close:active,
+.board__close:active,
+.idle__close:active,
+.shoprow__btn:active:not(:disabled),
+.shiprow__btn:active:not(:disabled),
+.decorrow__btn:active:not(:disabled),
+.trade__btn:active:not(:disabled),
+.creator__btn:active:not(:disabled),
+.goalrow__claim:active:not(:disabled),
+.idle__stop:active,
+.touch__act:active {
+  border-bottom-width: calc(4px * var(--ui-scale-plate));
+  border-image-source: var(--plate-src-down);
+  border-image-slice: 3 3 4 3 fill;
+  transform: translateY(1px);
+}
+
+.hud__btn:hover:not(:disabled),
+.shoprow__btn:hover:not(:disabled),
+.shiprow__btn:hover:not(:disabled),
+.trade__btn:hover:not(:disabled),
+.creator__btn:hover:not(:disabled),
+.goalrow__claim:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+/*
+ * Confirm actions take the green plate — buy, claim, ship, start. The pack has
+ * one cool family and nine warm ones, so green is the only colour available
+ * that reads as "yes" without competing with the rust the HUD is built from.
+ */
+.shoprow__btn,
+.goalrow__claim,
+.creator__btn {
+  --plate-src: url('/assets/ui-plate-moss.png');
+  --plate-src-down: url('/assets/ui-plate-moss-down.png');
+
+  color: var(--ink);
+}
+
+/*
+ * VIP stays visually apart, and §7 is why: it is the one control that spends
+ * REAL money, and a purchase button that looks like "Bag" blurs exactly the
+ * line the trading/RMT policy exists to keep sharp. Cyan is the pack's only
+ * cool family, so it cannot be mistaken for any other button on the bar.
+ */
+.hud__btn--vip {
+  --plate-src: url('/assets/ui-plate-cyan.png');
+  --plate-src-down: url('/assets/ui-plate-cyan-down.png');
+
+  color: var(--ink);
+}
+
+/*
+ * `.hud__btn` is a <button> everywhere except Credits, which is an <a> — links
+ * are not centred or sized like buttons by default, so the plate needs the
+ * layout too or the label sits on the bevel.
+ */
+a.hud__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+/*
+ * Icon buttons: a square plate with one 16x16 glyph and no text (Phase U2).
+ *
+ * The plate art is 48x16 — three times wider than tall — so a square button
+ * stretches its middle band horizontally to nothing and squashes it vertically.
+ * `border-image` handles the first for free (the middle repeats, so stretching
+ * is lossless) but the vertical borders would eat a 44px box: 3+5 slices at 2x
+ * is 16px of the 44. So icon buttons drop to plate scale 1 and let the fixed
+ * size do the work, which keeps the bevel a believable thickness here.
+ *
+ * ------------------------------------------------------------------
+ * Three bugs this block fixes, all of which made the rail look ragged
+ * ------------------------------------------------------------------
+ *
+ * 1. **`box-sizing` on the anchor.** `<button>` is `border-box` in every
+ *    browser's UA stylesheet; `<a>` is not. Credits is the one anchor in the
+ *    rail, so its 3/3/5/3 border was added OUTSIDE the width and it rendered
+ *    **50x52 against everything else's 44x44** — the only genuinely
+ *    different-sized button, and the one nobody would think to check.
+ *
+ * 2. **The glyphs were never centred.** `.hud__btn` sets `align-items: center`
+ *    and no `justify-content`, which defaults to `flex-start` — fine when the
+ *    button was icon-then-label, wrong the moment the label went away. Every
+ *    icon sat against the left bevel.
+ *
+ * 3. **Two icon sheets, two natural sizes.** The bag comes from `ui-hud.png`
+ *    and the rest from `button.png`; both happen to resolve to 32px today, but
+ *    only because two independent scale variables agree. Pinned here instead,
+ *    so the glyph is 32px because this rule says so.
+ */
+.hud__btn--icon {
+  --ui-scale-plate: 1;
+
+  box-sizing: border-box;
+  width: var(--rail-btn);
+  height: var(--rail-btn);
+  min-height: 0;
+  padding: 0;
+  /* No gap to collapse and no label to align — the glyph is the whole button. */
+  gap: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * Every glyph, from either sheet, at exactly 32px and dead centre.
+ *
+ * `flex: none` matters: a flex child with a background image and no intrinsic
+ * size will happily be shrunk by its container, and a 31px glyph on a 16px grid
+ * is a blurred glyph.
+ */
+.hud__btn--icon > .ui-icon,
+.hud__btn--icon > .hud__icon {
+  --ui-icon-scale: 2;
+
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+}
+
+/*
+ * Border-box on the rest of the family too. Every one of these now carries a
+ * 6-10px border-image, and the anchor above proves the default is not what the
+ * layout assumes.
+ */
+.hud__btn,
+.shop__close,
+.pack__close,
+.trade__close,
+.shipping__close,
+.board__close,
+.idle__close {
+  box-sizing: border-box;
+}
+
+/* The idle button's ON state: the plate stays pressed while it runs. */
+.hud__btn--icon.is-on {
+  border-bottom-width: calc(4px * var(--ui-scale-plate));
+  border-image-source: var(--plate-src-down);
+  border-image-slice: 3 3 4 3 fill;
+}
+
+/* Leaving is a quiet action; it should not shout beside Bag and Goals. */
+.hud__btn--quiet,
+.hud__btn--leave,
+.shop__close,
+.pack__close,
+.trade__close,
+.shipping__close,
+.board__close,
+.idle__close {
+  --plate-src: url('/assets/ui-plate-sand.png');
+  --plate-src-down: url('/assets/ui-plate-sand-down.png');
+
+  color: var(--ink);
+}
+
+/* Stopping idle mode is destructive-ish: it throws away a running plan. */
+.idle__stop {
+  --plate-src: url('/assets/ui-plate-pink.png');
+  --plate-src-down: url('/assets/ui-plate-pink-down.png');
+
+  color: var(--ink);
+}
+
+/* Gold, level and goal tags: the pill set. */
+.hud__gold,
+.hud__level,
+.goalrow__tag {
+  --ui-scale-tag: 1;
+
+  height: calc(27px * var(--ui-scale-tag));
+  border-style: solid;
+  border-width: 0 calc(4px * var(--ui-scale-tag)) 0 calc(5px * var(--ui-scale-tag));
+  border-image-source: url('/assets/ui-tag-honey.png');
+  border-image-slice: 0 4 0 5 fill;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
+  border-radius: 0;
+  color: var(--ink);
+}
+
+.hud__level {
+  border-image-source: url('/assets/ui-tag-cyan.png');
+}
+
+.goalrow__tag {
+  border-image-source: url('/assets/ui-tag-grey.png');
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Tooltip
+ *
+ * There was no tooltip anywhere in the game before Phase U. Built on the
+ * dialogue box so a hovered item speaks in the same voice the merchant does.
+ * ------------------------------------------------------------------ */
+
+.ui-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: 260px;
+  padding: calc(2px * var(--ui-scale)) calc(3px * var(--ui-scale));
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  color: var(--ink, #1c0a18);
+  /* Never eat a pointer event — a tooltip that can be hovered flickers. */
+  pointer-events: none;
+}
+
+.ui-tooltip[hidden] {
+  display: none;
+}
+
+.ui-tooltip__name {
+  font-family: var(--pixel-label);
+  font-size: var(--t-label);
+  text-transform: uppercase;
+  display: block;
+}
+
+.ui-tooltip__meta {
+  display: block;
+  margin-top: 0.25em;
+  color: var(--faint, #8d5449);
+}

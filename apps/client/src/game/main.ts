@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
+// Order matters: `ui.css` owns chrome (frames, plates, type) and `hud.css` owns
+// layout. Equal specificity means the later file wins any overlap, so a panel
+// that needs a special case says so in `hud.css` and gets it.
+import '../styles/ui.css';
 import '../styles/hud.css';
 import { PIXEL_SCALE } from '@tillhaven/shared/config';
 import { Preload } from './scenes/Preload.js';
 import { Farm } from './scenes/Farm.js';
+import { Interior } from './scenes/Interior.js';
 
 /**
  * Phaser boots only on /play. The landing and auth pages never load it, which
@@ -12,7 +17,17 @@ import { Farm } from './scenes/Farm.js';
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
-  backgroundColor: '#052a3a',
+  /*
+   * The water's own colour, so nothing can ever show as void.
+   *
+   * The animated water backdrop (`Farm.createWater`) covers the camera's whole
+   * visible rect, and this is belt and braces underneath it: a resize between
+   * frames, a scene that has not built its water yet, or the character creator
+   * before the farm exists all fall back to a colour that reads as more sea
+   * rather than as a hole in the page. Matches `WATER_TILE`'s `#0092dd`
+   * darkened for depth.
+   */
+  backgroundColor: '#0a6fa8',
   // Nearest-neighbour sampling and no sub-pixel positioning. Without this,
   // every 16px sprite in the game blurs.
   pixelArt: true,
@@ -30,13 +45,17 @@ const game = new Phaser.Game({
     powerPreference: 'low-power',
   },
   /*
-   * `Interior` is deliberately absent (T-11.05). The house's inside is hidden
-   * for the MVP (§5.7) — the scene, its furniture endpoints and their tests are
-   * all intact, and T-14.04 re-registers it here with new-pack interior art.
-   * Leaving it registered would mean a scene nothing can reach, loading art
-   * nothing draws.
+   * `Interior` is registered again (T-16.12), after being deliberately absent
+   * since T-11.05 — the house's inside was hidden for the MVP because its art
+   * pointed at a deleted pack (§5.7). T-16.08 re-measured all fourteen pieces
+   * against real art and T-16.10 authored the room; `Farm.enterHouse()` reaches
+   * it through the door.
+   *
+   * Order matters only in that `Preload` runs first. `Interior` is never the
+   * scene the game boots into: it is started by `scene.run` on the first trip
+   * through the door and slept thereafter.
    */
-  scene: [Preload, Farm],
+  scene: [Preload, Farm, Interior],
 });
 
 // The fallback message is only for the case where this module never ran.

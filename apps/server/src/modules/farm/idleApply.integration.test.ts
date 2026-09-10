@@ -8,9 +8,11 @@ import {
   CROPS,
   HOUR,
   IDLE_ACTION_MS,
-  IDLE_MAX_CATCHUP_ACTIONS,
+  ENERGY_COST,
+  EnergyAction,
   MINUTE,
   STARTING_PLOTS,
+  WOOD_PER_TREE,
   xpForHarvest,
 } from '@tillhaven/shared';
 import { applyIdleWork } from './idleApply.js';
@@ -120,6 +122,23 @@ async function ripenFirstPlot(): Promise<string> {
 
 /** Switches idle on through the real endpoint, then backdates the watermark. */
 async function idleSince(msAgo: number, tasks: string[], cropId?: string): Promise<void> {
+  if (tasks.length === 0) {
+    // T-18.07 refuses `enabled` with no chores at the boundary, so a shift with
+    // an empty task list can only be written straight into the row now. Still
+    // worth testing: rows like this exist from before that rule, and what the
+    // simulator does with one is exactly the question.
+    await db
+      .update(schema.farms)
+      .set({
+        idleEnabled: true,
+        idleTasks: '[]',
+        idleCropId: cropId ?? null,
+        idleProcessedAt: Date.now() - msAgo,
+      })
+      .where(eq(schema.farms.id, farmId));
+    return;
+  }
+
   const res = await client.put('/api/farm/idle', {
     enabled: true,
     tasks,
@@ -431,17 +450,25 @@ describe('applyIdleWork directly', () => {
   });
 
   /**
-   * A month away is more work than one request should do. The cap stops the
-   * simulation short and the watermark records exactly how far it got, so the
-   * remainder is picked up by the next read rather than lost — which is the
-   * whole reason `processedTo` exists rather than just writing `now`.
+   * **This used to test the action cap, and energy took the cap's job.**
+   *
+   * `IDLE_MAX_CATCHUP_ACTIONS` bounds how much work one request may do — 200
+   * actions. Energy bounds it far sooner: the cap is 40 at level 1 and 60 at
+   * the level cap, and the cheapest action costs 1, so **the farmer is always
+   * out of energy long before the action cap is reachable.** The cap is now
+   * effectively dead code in the applier; it is still tested at the simulator
+   * level, where a caller may pass unlimited energy.
+   *
+   * What this test pins is the property the cap existed for and that energy
+   * now provides: a long absence is NOT settled in full. The watermark stops
+   * where the farmer stopped, so the remainder is picked up next time rather
+   * than silently forgiven.
    */
-  it('stops at the action cap and watermarks short of now', async () => {
+  it('stops when the farmer runs out of energy, and watermarks short of now', async () => {
     /*
-     * Watering, not sowing: seeds run out and the cap needs work that does
-     * not. Every plot holds a crop with an absurd snapshotted duration, so it
-     * never ripens and keeps needing a drink every wet window — which over
-     * three months is far more actions than one request may do.
+     * Watering, not sowing: seeds run out and this needs work that does not.
+     * Every plot holds a crop with an absurd snapshotted duration, so it never
+     * ripens and keeps needing a drink every wet window.
      */
     await db
       .update(schema.plots)
@@ -462,15 +489,33 @@ describe('applyIdleWork directly', () => {
     const now = Date.now();
     const summary = await db.transaction((tx) => applyIdleWork(tx, player, now));
 
-    expect(summary.stoppedReason).toBe('action_cap');
-    expect(summary.actions).toBe(IDLE_MAX_CATCHUP_ACTIONS);
+    expect(summary.stoppedReason).toBe('out_of_energy');
+    expect(summary.actions).toBeGreaterThan(0);
     expect(summary.to).toBeLessThan(now);
     expect((await farmRow()).idleProcessedAt).toBe(summary.to);
 
-    // And the next read carries on from there rather than starting over.
-    const second = await db.transaction((tx) => applyIdleWork(tx, player, now));
+    // Every action it took was paid for, and the bar is now empty.
+    expect(summary.energySpent).toBe(
+      summary.actions * ENERGY_COST[EnergyAction.WATER],
+    );
+    const spent = await db
+      .select({ energySpent: schema.players.energySpent })
+      .from(schema.players)
+      .where(eq(schema.players.id, playerId));
+    expect(spent[0]!.energySpent).toBe(summary.energySpent);
+
+    /*
+     * **And the next read does NOT carry on**, which is the honest
+     * consequence of the design choice that idle work spends energy: a tired
+     * farmer stays tired until the player sleeps. Before energy this asserted
+     * the opposite — that the remainder resumed immediately — and that is no
+     * longer true of this game.
+     */
+    const tired = await currentPlayerRow(playerId);
+    const second = await db.transaction((tx) => applyIdleWork(tx, tired, now));
     expect(second.from).toBe(summary.to);
-    expect(second.actions).toBeGreaterThan(0);
+    expect(second.actions).toBe(0);
+    expect(second.stoppedReason).toBe('out_of_energy');
   });
 
   it('reports nothing, and writes nothing, when idle is off', async () => {
@@ -529,13 +574,23 @@ describe('the farm view predicts the next action (T-13.05)', () => {
    * is the grid every predicted instant sits on.
    */
   async function armIdle(tasks: string[]): Promise<number> {
-    const res = await client.put('/api/farm/idle', {
-      enabled: true,
-      tasks,
-      cropId: LEEK,
-      idempotencyKey: newKey(),
-    });
-    expect(res.status).toBe(200);
+    if (tasks.length === 0) {
+      // See `idleSince` above: T-18.07 makes this state unreachable through the
+      // endpoint, so it is written directly to keep guarding the simulator's
+      // handling of rows that already carry it.
+      await db
+        .update(schema.farms)
+        .set({ idleEnabled: true, idleTasks: '[]', idleCropId: LEEK })
+        .where(eq(schema.farms.id, farmId));
+    } else {
+      const res = await client.put('/api/farm/idle', {
+        enabled: true,
+        tasks,
+        cropId: LEEK,
+        idempotencyKey: newKey(),
+      });
+      expect(res.status).toBe(200);
+    }
 
     const at = Date.now();
     await db.update(schema.farms).set({ idleProcessedAt: at }).where(eq(schema.farms.id, farmId));
@@ -630,6 +685,11 @@ describe('the farm view predicts the next action (T-13.05)', () => {
     expect(idle).toEqual({ enabled: false, tasks: [], cropId: null, nextAction: null });
   });
 
+  /**
+   * Reachable only as a legacy row since T-18.07 — the endpoint refuses to
+   * create it. Kept because the row can exist, and a simulator that threw on
+   * one would break the farm read for whoever has it.
+   */
   it('has nothing next for a farmer given no chores', async () => {
     await armIdle([]);
 
@@ -777,5 +837,87 @@ describe('the farm read reports what the farmer did while away (T-13.08)', () =>
     expect(summary?.bagWasFull).toBe(true);
     expect(summary?.harvested).toEqual({});
     expect(summary?.tilled).toBe(0);
+  });
+});
+
+/**
+ * T-20.06 — the farmer chops while you are away.
+ *
+ * The unit tests prove the simulator decides correctly; these prove the
+ * decision is actually WRITTEN — a tree row stamped, wood in the bag, and the
+ * whole thing inside the one transaction the shift already runs in.
+ */
+describe('idle chopping', () => {
+  async function treeRows() {
+    return db
+      .select()
+      .from(schema.trees)
+      .where(eq(schema.trees.farmId, farmId))
+      .orderBy(asc(schema.trees.y), asc(schema.trees.x));
+  }
+
+  it('fells trees and banks the wood over an offline stretch', async () => {
+    await giveItem('axe_wood', 1);
+    await idleSince(HOUR, ['chop']);
+
+    const res = await client.get('/api/farm');
+    expect(res.status, res.code).toBe(200);
+
+    const felled = (await treeRows()).filter((t) => t.choppedAt !== null);
+    expect(felled.length, 'nothing was chopped').toBeGreaterThan(0);
+    expect(await held('wood')).toBe(felled.length * WOOD_PER_TREE);
+
+    // The view agrees with the rows — a stump on the read is a stump in the db.
+    const stumps = res.body.trees.filter((t: { isStanding: boolean }) => !t.isStanding);
+    expect(stumps).toHaveLength(felled.length);
+  });
+
+  /**
+   * The axe gate, end to end. A farmer told to chop with no axe must simply do
+   * nothing — not fail the shift, and above all not produce wood the endpoint
+   * would have refused.
+   */
+  it('chops nothing without an axe', async () => {
+    await idleSince(HOUR, ['chop']);
+
+    await client.get('/api/farm');
+
+    expect((await treeRows()).every((t) => t.choppedAt === null)).toBe(true);
+    expect(await held('wood')).toBe(0);
+  });
+
+  it('does not re-fell a tree it already chopped', async () => {
+    await giveItem('axe_wood', 1);
+    await idleSince(HOUR, ['chop']);
+    await client.get('/api/farm');
+
+    const woodAfterFirst = await held('wood');
+    const stampsAfterFirst = (await treeRows()).map((t) => t.choppedAt);
+
+    // A second shift over another hour: every tree is a stump, and an 8h
+    // regrow has not happened, so there is nothing left to do.
+    await db
+      .update(schema.farms)
+      .set({ idleProcessedAt: Date.now() - HOUR })
+      .where(eq(schema.farms.id, farmId));
+    await client.get('/api/farm');
+
+    expect(await held('wood'), 'wood was minted twice').toBe(woodAfterFirst);
+    expect((await treeRows()).map((t) => t.choppedAt)).toEqual(stampsAfterFirst);
+  });
+
+  /**
+   * Chopping must not crowd out the farm. This is the priority rule observed
+   * where it matters — a real shift with both chores switched on.
+   */
+  it('still works the field when both chores are on', async () => {
+    await giveItem('axe_wood', 1, 5);
+    await giveItem(LEEK_SEED, 10, 6);
+    await idleSince(HOUR, ['till', 'plant', 'water', 'chop'], LEEK);
+
+    await client.get('/api/farm');
+
+    const tilled = (await plots()).filter((p) => p.tilledAt !== null);
+    expect(tilled.length, 'the field was ignored in favour of wood').toBeGreaterThan(0);
   });
 });

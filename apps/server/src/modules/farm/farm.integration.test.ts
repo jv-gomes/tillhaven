@@ -20,6 +20,13 @@ import {
   HOUR,
   BASE_INVENTORY_SLOTS,
   WATER_DURATION_MS,
+  TREES,
+  TREE_REGROW_MS,
+  WOOD_PER_TREE,
+  ENERGY_COST,
+  SLEEP_DURATION_MS,
+  EnergyAction,
+  energyCapForLevel,
 } from '@tillhaven/shared';
 
 let client: TestClient;
@@ -58,7 +65,10 @@ async function unlockedPlotIds(): Promise<string[]> {
  * low slot indices are already occupied — hardcoding one collides with the
  * unique index on (player, container, slot).
  */
-async function giveSeeds(itemId: string, quantity: number): Promise<void> {
+async function giveItem(itemId: string, quantity: number): Promise<void> {
+  // Named `giveSeeds` until T-20.03 needed it for an axe. It was always
+  // generic — `itemId`, `quantity` — so the name was the only thing narrow
+  // about it, and a second near-identical helper would have been worse.
   const existing = await db
     .select({ slotIndex: schema.inventoryItems.slotIndex })
     .from(schema.inventoryItems)
@@ -242,6 +252,64 @@ describe('GET /api/farm', () => {
     }
   });
 
+  /* ---------------------------------------------------------------- *
+   * Trees (T-20.01)
+   * ---------------------------------------------------------------- */
+
+  it('seeds one tree per authored position at registration', async () => {
+    const res = await client.get('/api/farm');
+
+    expect(res.body.trees).toHaveLength(TREES.length);
+    // The rows must describe the SAME forest `farm.json` draws, or a player
+    // chops a tree that is not where they are standing.
+    expect(new Set(res.body.trees.map((t: { x: number; y: number }) => `${t.x},${t.y}`))).toEqual(
+      new Set(TREES.map((t) => `${t.x},${t.y}`)),
+    );
+  });
+
+  it('reports a fresh farm‘s trees as standing', async () => {
+    const res = await client.get('/api/farm');
+
+    for (const tree of res.body.trees) {
+      expect(tree.isStanding, `${tree.x},${tree.y}`).toBe(true);
+      expect(tree.regrowsInMs).toBe(0);
+      expect(typeof tree.id).toBe('string');
+    }
+  });
+
+  /**
+   * The §4.2 behaviour, end to end: no job runs, so a stump has to become a
+   * tree purely because time passed between two reads. Written against a
+   * `chopped_at` set directly because the chop intent is T-20.03 — the state
+   * model has to be right before there is anything that writes it.
+   */
+  it('reports a chopped tree as a stump, then standing once it regrows', async () => {
+    const farm = (await client.get('/api/farm')).body.farm;
+    const now = Date.now();
+
+    // Chopped just now: a stump with the full wait ahead of it.
+    await db.update(schema.trees).set({ choppedAt: now }).where(eq(schema.trees.farmId, farm.id));
+
+    const stumps = (await client.get('/api/farm')).body.trees;
+    expect(stumps.every((t: { isStanding: boolean }) => !t.isStanding)).toBe(true);
+    for (const t of stumps) {
+      // Bounded rather than exact: the server reads its own clock, so this is
+      // "nearly the whole wait", not a millisecond promise.
+      expect(t.regrowsInMs).toBeGreaterThan(TREE_REGROW_MS - 60_000);
+      expect(t.regrowsInMs).toBeLessThanOrEqual(TREE_REGROW_MS);
+    }
+
+    // Chopped a full cycle ago: back, with nothing having run in between.
+    await db
+      .update(schema.trees)
+      .set({ choppedAt: now - TREE_REGROW_MS })
+      .where(eq(schema.trees.farmId, farm.id));
+
+    const regrown = (await client.get('/api/farm')).body.trees;
+    expect(regrown.every((t: { isStanding: boolean }) => t.isStanding)).toBe(true);
+    expect(regrown.every((t: { regrowsInMs: number }) => t.regrowsInMs === 0)).toBe(true);
+  });
+
   it('never exposes another player‘s farm', async () => {
     const other = await createTestClient();
     const otherUser = await registerTestUser(other);
@@ -283,7 +351,7 @@ describe('GET /api/farm', () => {
       await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
       expect((await plotView(plotId!)).tilled).toBe(true);
 
-      await giveSeeds(CROPS.potato.seedItemId, 1);
+      await giveItem(CROPS.potato.seedItemId, 1);
       await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
       await backdatePlot(plotId!, CROPS.potato.growthDurationMs);
       await client.post('/api/farm/harvest', { plotId, idempotencyKey: newKey() });
@@ -293,7 +361,7 @@ describe('GET /api/farm', () => {
     });
 
     it('reports when the soil dries out, without the client computing it', async () => {
-      await giveSeeds(CROPS.onion.seedItemId, 1);
+      await giveItem(CROPS.onion.seedItemId, 1);
       const plotId = await tilledPlotId();
       await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
 
@@ -320,7 +388,7 @@ describe('GET /api/farm', () => {
     });
 
     it('never calls a ripe crop paused, however dry it is', async () => {
-      await giveSeeds(CROPS.potato.seedItemId, 1);
+      await giveItem(CROPS.potato.seedItemId, 1);
       const plotId = await tilledPlotId();
       await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
       await backdatePlot(plotId, CROPS.potato.growthDurationMs);
@@ -339,7 +407,7 @@ describe('GET /api/farm', () => {
         .set({ vipUntil: Date.now() + HOUR, flaggedAt: null })
         .where(eq(schema.players.id, playerId));
 
-      await giveSeeds(CROPS.leek.seedItemId, 1);
+      await giveItem(CROPS.leek.seedItemId, 1);
       const plotId = await tilledPlotId();
       await client.post('/api/farm/plant', { plotId, cropId: 'leek', idempotencyKey: newKey() });
 
@@ -355,6 +423,206 @@ describe('GET /api/farm', () => {
 /* ------------------------------------------------------------------ *
  * Till (T-9.02)
  * ------------------------------------------------------------------ */
+
+/**
+ * T-20.03 — chopping.
+ *
+ * The first action in the game gated on **owning a tool**. Till and water check
+ * nothing, correctly: everyone is granted a hoe and a can at registration, so
+ * there is no state to verify. The axe is not granted, which makes owning one
+ * real state and the check a real gate — and makes "chop without an axe" a
+ * failure path that has to be tested rather than reasoned about.
+ */
+describe('POST /api/farm/chop', () => {
+  async function treeRows() {
+    const [farm] = await db.select().from(schema.farms).where(eq(schema.farms.playerId, playerId));
+    return db.select().from(schema.trees).where(eq(schema.trees.farmId, farm!.id));
+  }
+
+  async function standingTreeId(): Promise<string> {
+    return (await treeRows())[0]!.id;
+  }
+
+  const giveAxe = () => giveItem('axe_wood', 1);
+
+  it('drops wood and stumps the tree', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+    const before = Date.now();
+
+    const res = await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    expect(res.status, res.code).toBe(200);
+    expect(res.body.itemId).toBe('wood');
+    expect(res.body.quantity).toBe(WOOD_PER_TREE);
+    expect(res.body.regrowsInMs).toBe(TREE_REGROW_MS);
+
+    expect(await heldQuantity('wood')).toBe(WOOD_PER_TREE);
+
+    const tree = (await treeRows()).find((t) => t.id === treeId)!;
+    expect(tree.choppedAt).not.toBeNull();
+    expect(tree.choppedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it('refuses without an axe, and leaves the tree standing', async () => {
+    const treeId = await standingTreeId();
+
+    const res = await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    expect(res.code).toBe('TOOL_REQUIRED');
+    expect(res.status).toBe(403);
+    // The refusal must not have half-happened.
+    expect(await heldQuantity('wood')).toBe(0);
+    expect((await treeRows()).find((t) => t.id === treeId)!.choppedAt).toBeNull();
+  });
+
+  it('refuses a stump that has not grown back, and says how long is left', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+    await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    const res = await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    expect(res.code).toBe('TREE_NOT_READY');
+    // One tree chopped once: the second attempt must not have paid out again.
+    expect(await heldQuantity('wood')).toBe(WOOD_PER_TREE);
+  });
+
+  it('lets a regrown tree be chopped again', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+    await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    // Wind the stump back a full cycle — nothing runs, so this is the only way
+    // time passes in a test (§4.2).
+    await db
+      .update(schema.trees)
+      .set({ choppedAt: Date.now() - TREE_REGROW_MS })
+      .where(eq(schema.trees.id, treeId));
+
+    const res = await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    expect(res.status, res.code).toBe(200);
+    expect(await heldQuantity('wood')).toBe(WOOD_PER_TREE * 2);
+  });
+
+  it('never chops another player‘s tree', async () => {
+    await giveAxe();
+    const other = await createTestClient();
+    await registerTestUser(other);
+    const [theirFarm] = await db
+      .select()
+      .from(schema.farms)
+      .where(eq(schema.farms.playerId, (await other.get('/api/farm')).body.farm.playerId));
+    const [theirTree] = await db
+      .select()
+      .from(schema.trees)
+      .where(eq(schema.trees.farmId, theirFarm!.id));
+
+    const res = await client.post('/api/farm/chop', {
+      treeId: theirTree!.id,
+      idempotencyKey: newKey(),
+    });
+
+    // The same answer a nonexistent tree gets — telling them apart would
+    // confirm the id is real.
+    expect(res.code).toBe('NOT_FOUND');
+    expect(await heldQuantity('wood')).toBe(0);
+    expect((await db.select().from(schema.trees).where(eq(schema.trees.id, theirTree!.id)))[0]!
+      .choppedAt).toBeNull();
+    await other.close();
+  });
+
+  it('gives a tree that does not exist the same answer', async () => {
+    await giveAxe();
+    const res = await client.post('/api/farm/chop', {
+      treeId: '00000000-0000-4000-8000-000000000000',
+      idempotencyKey: newKey(),
+    });
+    expect(res.code).toBe('NOT_FOUND');
+  });
+
+  /**
+   * The one that would destroy items. A full bag must refuse the whole action —
+   * the tree stays standing and the wood is not silently dropped on the floor
+   * (§5.5: "never silently deletes items").
+   */
+  it('refuses on a full bag without destroying the drop or the tree', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+
+    // Fill every remaining slot with something that cannot stack with wood.
+    const used = await db
+      .select({ slotIndex: schema.inventoryItems.slotIndex })
+      .from(schema.inventoryItems)
+      .where(
+        and(
+          eq(schema.inventoryItems.playerId, playerId),
+          eq(schema.inventoryItems.container, 'inventory'),
+        ),
+      );
+    const taken = new Set(used.map((r) => r.slotIndex));
+    for (let i = 0; i < BASE_INVENTORY_SLOTS; i++) {
+      if (taken.has(i)) continue;
+      await db.insert(schema.inventoryItems).values({
+        playerId,
+        container: 'inventory',
+        slotIndex: i,
+        itemId: 'hay',
+        quantity: 999,
+      });
+    }
+
+    const res = await client.post('/api/farm/chop', { treeId, idempotencyKey: newKey() });
+
+    expect(res.code).toBe('INVENTORY_FULL');
+    expect(await heldQuantity('wood'), 'wood was created anyway').toBe(0);
+    expect(
+      (await treeRows()).find((t) => t.id === treeId)!.choppedAt,
+      'the tree fell but the wood did not arrive',
+    ).toBeNull();
+  });
+
+  /**
+   * §4.5. A flaky connection retrying a chop must not fell two trees‘ worth of
+   * wood from one tree.
+   */
+  it('pays out once for a repeated idempotency key', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+    const key = newKey();
+
+    const first = await client.post('/api/farm/chop', { treeId, idempotencyKey: key });
+    const second = await client.post('/api/farm/chop', { treeId, idempotencyKey: key });
+
+    expect(first.status, first.code).toBe(200);
+    expect(second.status, second.code).toBe(200);
+    expect(second.body).toEqual(first.body);
+    expect(await heldQuantity('wood')).toBe(WOOD_PER_TREE);
+  });
+
+  it('refuses a payload that names a tool, rather than trusting it', async () => {
+    await giveAxe();
+    const treeId = await standingTreeId();
+
+    // `chopSchema` is strict about shape: the client never says what it holds.
+    const res = await client.post('/api/farm/chop', {
+      treeId,
+      itemId: 'axe_gold',
+      quantity: 999,
+      idempotencyKey: newKey(),
+    });
+
+    // Either rejected outright or the extras ignored — what must NOT happen is
+    // the payload changing the drop.
+    if (res.status === 200) {
+      expect(res.body.quantity).toBe(WOOD_PER_TREE);
+      expect(await heldQuantity('wood')).toBe(WOOD_PER_TREE);
+    } else {
+      expect(res.code).toBe('VALIDATION_FAILED');
+    }
+  });
+});
 
 describe('POST /api/farm/till', () => {
   /** The raw row, so the assertions are about stored state, not a view. */
@@ -394,7 +662,7 @@ describe('POST /api/farm/till', () => {
   });
 
   it('refuses to till a plot with something growing in it', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
 
@@ -457,7 +725,7 @@ describe('POST /api/farm/till', () => {
   });
 
   it('refuses planting into untilled soil, without consuming the seed', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 3);
+    await giveItem(CROPS.potato.seedItemId, 3);
     const [plotId] = await unlockedPlotIds();
 
     const res = await client.post('/api/farm/plant', {
@@ -473,7 +741,7 @@ describe('POST /api/farm/till', () => {
   });
 
   it('leaves the soil tilled after a harvest, so the next crop needs no hoe', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 2);
+    await giveItem(CROPS.potato.seedItemId, 2);
     const [plotId] = await unlockedPlotIds();
 
     await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
@@ -503,7 +771,7 @@ describe('POST /api/farm/till', () => {
 
 describe('POST /api/farm/plant', () => {
   it('consumes a seed and stamps the plot', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 3);
+    await giveItem(CROPS.potato.seedItemId, 3);
     const plotId = await tilledPlotId();
 
     const res = await client.post('/api/farm/plant', {
@@ -524,7 +792,7 @@ describe('POST /api/farm/plant', () => {
   });
 
   it('snapshots the growth duration onto the plot', async () => {
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
 
@@ -534,7 +802,7 @@ describe('POST /api/farm/plant', () => {
   });
 
   it('rejects planting into an occupied plot and does not consume a second seed', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 5);
+    await giveItem(CROPS.potato.seedItemId, 5);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
 
@@ -550,7 +818,7 @@ describe('POST /api/farm/plant', () => {
   });
 
   it('rejects planting into a locked plot', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const state = await client.get('/api/farm');
     const locked = state.body.plots.find((p: { unlocked: boolean }) => !p.unlocked);
 
@@ -606,7 +874,7 @@ describe('POST /api/farm/plant', () => {
     const otherState = await other.get('/api/farm');
     const victimPlot = otherState.body.plots.find((p: { unlocked: boolean }) => p.unlocked);
 
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const res = await client.post('/api/farm/plant', {
       plotId: victimPlot.id,
       cropId: 'potato',
@@ -626,7 +894,7 @@ describe('POST /api/farm/plant', () => {
   });
 
   it('is idempotent: a replayed key consumes only one seed', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 5);
+    await giveItem(CROPS.potato.seedItemId, 5);
     const plotId = await tilledPlotId();
     const key = newKey('replay-plant');
 
@@ -648,7 +916,7 @@ describe('POST /api/farm/plant', () => {
     expect(failed.code).toBe('INSUFFICIENT_ITEMS');
 
     // The rollback took the key row with it, so the retry genuinely runs.
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const retried = await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: key });
     expect(retried.status).toBe(200);
   });
@@ -670,7 +938,7 @@ describe('POST /api/farm/plant', () => {
 describe('POST /api/farm/water', () => {
   /** A tilled plot with an onion in it, freshly planted and dry. */
   async function plantedOnion(): Promise<string> {
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     const plotId = await tilledPlotId();
     const res = await client.post('/api/farm/plant', {
       plotId,
@@ -828,7 +1096,7 @@ describe('POST /api/farm/water', () => {
     expect((await plotRowOf(plotId)).grownMs, 'harvest resets the bank').toBe(0);
 
     // ...and the replant does not inherit a ripe crop's worth of progress.
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
     const row = await plotRowOf(plotId);
     expect(row.grownMs).toBe(0);
@@ -850,7 +1118,7 @@ describe('POST /api/farm/water', () => {
       .set({ grownMs: 30 * 24 * HOUR })
       .where(eq(schema.plots.id, plotId));
 
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
 
     expect((await plotRowOf(plotId)).grownMs).toBe(0);
@@ -859,7 +1127,7 @@ describe('POST /api/farm/water', () => {
   });
 
   it('leaves a ripe crop ripe when it is watered anyway', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
     await backdatePlot(plotId, CROPS.potato.growthDurationMs);
@@ -941,7 +1209,7 @@ describe('POST /api/farm/water', () => {
 describe('POST /api/farm/harvest', () => {
   async function plantAndRipen(cropId: keyof typeof CROPS = 'potato'): Promise<string> {
     const crop = CROPS[cropId];
-    await giveSeeds(crop.seedItemId, 1);
+    await giveItem(crop.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId, idempotencyKey: newKey() });
     await backdatePlot(plotId!, crop.growthDurationMs);
@@ -972,7 +1240,7 @@ describe('POST /api/farm/harvest', () => {
   });
 
   it('rejects harvesting a crop that is not ready', async () => {
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
 
@@ -1072,7 +1340,7 @@ describe('POST /api/farm/harvest', () => {
   });
 
   it('does not duplicate seeds when two plants race the same plot', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 5);
+    await giveItem(CROPS.potato.seedItemId, 5);
     const plotId = await tilledPlotId();
 
     const results = await Promise.all([
@@ -1107,7 +1375,7 @@ describe('every crop, end to end', () => {
     const crop = CROPS[cropId];
 
     it(`${crop.name}: plants, grows through every stage, and harvests`, async () => {
-      await giveSeeds(crop.seedItemId, 1);
+      await giveItem(crop.seedItemId, 1);
       const plotId = await tilledPlotId();
 
       const planted = await client.post('/api/farm/plant', {
@@ -1169,7 +1437,7 @@ describe('every crop, end to end', () => {
     const stageCount = crop.stageFrames.length;
 
     it(`reports ${crop.name} at its last growth stage before it is ripe`, async () => {
-      await giveSeeds(crop.seedItemId, 1);
+      await giveItem(crop.seedItemId, 1);
       const plotId = await tilledPlotId();
       await client.post('/api/farm/plant', { plotId, cropId, idempotencyKey: newKey() });
 
@@ -1206,7 +1474,7 @@ describe('VIP growth speed and its revocation on a flagged account', () => {
       .set({ vipUntil: Date.now() + HOUR, flaggedAt: null })
       .where(eq(schema.players.id, playerId));
 
-    await giveSeeds(CROPS.leek.seedItemId, 1);
+    await giveItem(CROPS.leek.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'leek', idempotencyKey: newKey() });
 
@@ -1225,7 +1493,7 @@ describe('VIP growth speed and its revocation on a flagged account', () => {
       .set({ vipUntil: Date.now() + 30 * 24 * HOUR, flaggedAt: Date.now() - 1 })
       .where(eq(schema.players.id, playerId));
 
-    await giveSeeds(CROPS.leek.seedItemId, 1);
+    await giveItem(CROPS.leek.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'leek', idempotencyKey: newKey() });
 
@@ -1265,7 +1533,7 @@ describe('farm level', () => {
 
   it('grants experience for the wait a harvest represents', async () => {
     const crop = CROPS.potato;
-    await giveSeeds(crop.seedItemId, 1);
+    await giveItem(crop.seedItemId, 1);
     const plotId = await tilledPlotId();
 
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
@@ -1278,7 +1546,7 @@ describe('farm level', () => {
   });
 
   it('grants nothing for planting — only a crop that actually grew pays out', async () => {
-    await giveSeeds(CROPS.leek.seedItemId, 1);
+    await giveItem(CROPS.leek.seedItemId, 1);
     const plotId = await tilledPlotId();
 
     await client.post('/api/farm/plant', { plotId, cropId: 'leek', idempotencyKey: newKey() });
@@ -1300,7 +1568,7 @@ describe('farm level', () => {
   /** A replayed harvest must not pay experience twice, like everything else. */
   it('is idempotent with the harvest that earned it', async () => {
     const crop = CROPS.potato;
-    await giveSeeds(crop.seedItemId, 1);
+    await giveItem(crop.seedItemId, 1);
     const plotId = await tilledPlotId();
 
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
@@ -1318,7 +1586,7 @@ describe('farm level', () => {
 
     for (const cropId of ['leek', 'potato', 'onion'] as const) {
       const crop = CROPS[cropId];
-      await giveSeeds(crop.seedItemId, 1);
+      await giveItem(crop.seedItemId, 1);
       const plotId = await tilledPlotId();
 
       await client.post('/api/farm/plant', { plotId, cropId, idempotencyKey: newKey() });
@@ -1337,7 +1605,7 @@ describe('farm level', () => {
    */
   it('ignores a level or experience a client tries to send', async () => {
     const crop = CROPS.leek;
-    await giveSeeds(crop.seedItemId, 1);
+    await giveItem(crop.seedItemId, 1);
     const plotId = await tilledPlotId();
 
     await client.post('/api/farm/plant', {
@@ -1366,7 +1634,7 @@ describe('farm level', () => {
  */
 describe('offline progression', () => {
   it('a watered crop ripens with no requests in between', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
     await client.post('/api/farm/water', { plotId, idempotencyKey: newKey() });
@@ -1382,7 +1650,7 @@ describe('offline progression', () => {
   });
 
   it('reports partial progress accurately after a partial absence', async () => {
-    await giveSeeds(CROPS.onion.seedItemId, 1);
+    await giveItem(CROPS.onion.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'onion', idempotencyKey: newKey() });
     await client.post('/api/farm/water', { plotId, idempotencyKey: newKey() });
@@ -1402,7 +1670,7 @@ describe('offline progression', () => {
   });
 
   it('needs no scheduled job: reading the state does not change it', async () => {
-    await giveSeeds(CROPS.potato.seedItemId, 1);
+    await giveItem(CROPS.potato.seedItemId, 1);
     const plotId = await tilledPlotId();
     await client.post('/api/farm/plant', { plotId, cropId: 'potato', idempotencyKey: newKey() });
     await client.post('/api/farm/water', { plotId, idempotencyKey: newKey() });
@@ -1421,5 +1689,317 @@ describe('offline progression', () => {
     expect(mid!.grownMs).toBe(0);
     expect(after).toEqual(mid);
     expect({ ...after!, wateredAt: null }).toEqual({ ...before!, wateredAt: null });
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Energy (MVP re-scope)
+ * ------------------------------------------------------------------ */
+
+describe('energy', () => {
+  async function energyRow() {
+    const [row] = await db
+      .select({
+        energySpent: schema.players.energySpent,
+        sleepingSince: schema.players.sleepingSince,
+      })
+      .from(schema.players)
+      .where(eq(schema.players.id, playerId));
+    return row!;
+  }
+
+  /** Empties the bar without doing anything else to the farm. */
+  async function exhaust(): Promise<void> {
+    await db
+      .update(schema.players)
+      .set({ energySpent: energyCapForLevel(1) })
+      .where(eq(schema.players.id, playerId));
+  }
+
+  it('charges the configured cost for a successful action', async () => {
+    const [plotId] = await unlockedPlotIds();
+    expect((await energyRow()).energySpent, 'a new farmer is rested').toBe(0);
+
+    const res = await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+
+    expect(res.status, res.code).toBe(200);
+    expect((await energyRow()).energySpent).toBe(ENERGY_COST[EnergyAction.TILL]);
+  });
+
+  /**
+   * **A refused action must cost nothing.** Being told "that soil is already
+   * tilled" and ALSO losing two points would be the game charging for its own
+   * refusal — and it is the reason the charge sits after the state checks
+   * rather than at the top of the function.
+   */
+  it('charges nothing when the action is refused on its own terms', async () => {
+    const [plotId] = await unlockedPlotIds();
+    await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+    const after = (await energyRow()).energySpent;
+
+    const again = await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+
+    expect(again.status).toBe(409);
+    expect(again.code).toBe('PLOT_ALREADY_TILLED');
+    expect((await energyRow()).energySpent, 'the refusal was free').toBe(after);
+  });
+
+  it('refuses the action, and changes nothing, when the bar is empty', async () => {
+    const [plotId] = await unlockedPlotIds();
+    await exhaust();
+
+    const res = await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+
+    expect(res.status).toBe(409);
+    expect(res.code).toBe('INSUFFICIENT_ENERGY');
+    expect(res.body.error.details).toMatchObject({
+      action: 'till',
+      cost: ENERGY_COST[EnergyAction.TILL],
+      energy: 0,
+    });
+
+    const [row] = await db.select().from(schema.plots).where(eq(schema.plots.id, plotId!));
+    expect(row!.tilledAt, 'the plot was not tilled').toBeNull();
+  });
+
+  /**
+   * The exact boundary. One point short must be refused, and exactly enough
+   * must succeed — an off-by-one here is the difference between a limit and a
+   * suggestion.
+   */
+  it('spends the last point but not one more', async () => {
+    const plots = await unlockedPlotIds();
+    const cost = ENERGY_COST[EnergyAction.TILL];
+
+    await db
+      .update(schema.players)
+      .set({ energySpent: energyCapForLevel(1) - cost })
+      .where(eq(schema.players.id, playerId));
+
+    const ok = await client.post('/api/farm/till', { plotId: plots[0], idempotencyKey: newKey() });
+    expect(ok.status, ok.code).toBe(200);
+
+    const broke = await client.post('/api/farm/till', {
+      plotId: plots[1],
+      idempotencyKey: newKey(),
+    });
+    expect(broke.code).toBe('INSUFFICIENT_ENERGY');
+  });
+
+  /**
+   * **Two tabs must not spend the same point twice.**
+   *
+   * `spendEnergy` updates `where energy_spent = <what it read>`, so of two
+   * requests that both saw the same balance only one can match a row. Without
+   * it a player could act twice for the price of once by pressing the key in
+   * two tabs — the same class of bug the gold lock exists for, and cheaper to
+   * fix here because energy has no other reader to serialise against.
+   */
+  it('cannot be spent twice by racing two requests', async () => {
+    const plots = await unlockedPlotIds();
+    const cost = ENERGY_COST[EnergyAction.TILL];
+    const cap = energyCapForLevel(1);
+
+    // Exactly ONE action's worth left. This is what makes the race decidable:
+    // with an unconditional update both requests would succeed and the bar
+    // would go past empty.
+    await db
+      .update(schema.players)
+      .set({ energySpent: cap - cost })
+      .where(eq(schema.players.id, playerId));
+
+    const [a, b] = await Promise.all([
+      client.post('/api/farm/till', { plotId: plots[0], idempotencyKey: newKey('ea') }),
+      client.post('/api/farm/till', { plotId: plots[1], idempotencyKey: newKey('eb') }),
+    ]);
+
+    const ok = [a, b].filter((r) => r.status === 200);
+    expect(ok, 'one action was affordable, so exactly one may succeed').toHaveLength(1);
+
+    const spent = (await energyRow()).energySpent;
+    expect(spent, 'the bar must never go past empty').toBeLessThanOrEqual(cap);
+    expect(spent).toBe(cap);
+
+    // ...and only one plot was actually worked.
+    const rows = await db
+      .select()
+      .from(schema.plots)
+      .where(eq(schema.plots.farmId, (await db
+        .select({ id: schema.farms.id })
+        .from(schema.farms)
+        .where(eq(schema.farms.playerId, playerId)))[0]!.id));
+    expect(rows.filter((r) => r.tilledAt !== null)).toHaveLength(1);
+  });
+
+  it('reports the bar on the player, settled on read', async () => {
+    const before = await client.get('/api/farm');
+    expect(before.body.player.energy).toMatchObject({
+      current: energyCapForLevel(1),
+      max: energyCapForLevel(1),
+      isSleeping: false,
+      fullInMs: 0,
+    });
+
+    const [plotId] = await unlockedPlotIds();
+    await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+
+    const after = await client.get('/api/farm');
+    expect(after.body.player.energy.current).toBe(
+      energyCapForLevel(1) - ENERGY_COST[EnergyAction.TILL],
+    );
+  });
+
+  /**
+   * A whole opening pass has to fit, or the tutorial line tells a new player
+   * to do something the game will refuse partway through. This walks it
+   * through the real endpoints rather than trusting the arithmetic in
+   * `energy.test.ts`.
+   */
+  it('lets a new farmer till, plant and water every starting plot', async () => {
+    const plots = await unlockedPlotIds();
+    await giveItem(CROPS.leek.seedItemId, plots.length);
+
+    for (const plotId of plots) {
+      expect((await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() })).status).toBe(200);
+      expect(
+        (await client.post('/api/farm/plant', { plotId, cropId: 'leek', idempotencyKey: newKey() }))
+          .status,
+      ).toBe(200);
+      expect((await client.post('/api/farm/water', { plotId, idempotencyKey: newKey() })).status).toBe(200);
+    }
+
+    const state = await client.get('/api/farm');
+    expect(state.body.player.energy.current, 'and there is a little left over')
+      .toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('POST /api/farm/sleep and /wake', () => {
+  async function playerRow() {
+    const [row] = await db
+      .select({
+        energySpent: schema.players.energySpent,
+        sleepingSince: schema.players.sleepingSince,
+      })
+      .from(schema.players)
+      .where(eq(schema.players.id, playerId));
+    return row!;
+  }
+
+  /** Empties the bar and backdates the moment they lay down. */
+  async function asleepFor(ms: number): Promise<void> {
+    await db
+      .update(schema.players)
+      .set({ energySpent: energyCapForLevel(1), sleepingSince: Date.now() - ms })
+      .where(eq(schema.players.id, playerId));
+  }
+
+  it('lies down, recording the moment and nothing else', async () => {
+    const before = Date.now();
+    const res = await client.post('/api/farm/sleep', { idempotencyKey: newKey() });
+
+    expect(res.status, res.code).toBe(200);
+    const row = await playerRow();
+    expect(row.sleepingSince).toBeGreaterThanOrEqual(before);
+    expect(row.energySpent, 'sleeping does not itself change the bar').toBe(0);
+  });
+
+  /**
+   * A second press must not restart the clock. Restarting would mean a
+   * double-click threw away everything the player had slept for — the worst
+   * possible reading of a harmless second press.
+   */
+  it('does not restart the clock when already asleep', async () => {
+    await asleepFor(4 * 60_000);
+    const { sleepingSince } = await playerRow();
+
+    const res = await client.post('/api/farm/sleep', { idempotencyKey: newKey() });
+
+    expect(res.status).toBe(200);
+    expect((await playerRow()).sleepingSince).toBe(sleepingSince);
+  });
+
+  it('restores the whole bar after a full night', async () => {
+    await asleepFor(SLEEP_DURATION_MS);
+
+    const res = await client.post('/api/farm/wake', { idempotencyKey: newKey() });
+
+    expect(res.status, res.code).toBe(200);
+    expect(res.body.energy.current).toBe(energyCapForLevel(1));
+    const row = await playerRow();
+    expect(row.energySpent).toBe(0);
+    expect(row.sleepingSince, 'and they are awake again').toBeNull();
+  });
+
+  /**
+   * Waking early keeps the fraction. An all-or-nothing rule would punish a
+   * player for coming back, and "you slept but gained nothing" is the kind of
+   * rule people remember as a bug.
+   */
+  it('keeps the fraction when woken early', async () => {
+    await asleepFor(SLEEP_DURATION_MS / 2);
+
+    const res = await client.post('/api/farm/wake', { idempotencyKey: newKey() });
+
+    expect(res.body.energy.current).toBe(energyCapForLevel(1) / 2);
+    expect(res.body.recovered).toBe(energyCapForLevel(1) / 2);
+    expect((await playerRow()).energySpent).toBe(energyCapForLevel(1) / 2);
+  });
+
+  it('is a harmless no-op when they were not asleep', async () => {
+    const res = await client.post('/api/farm/wake', { idempotencyKey: newKey() });
+
+    expect(res.status).toBe(200);
+    expect(res.body.sleptForMs).toBe(0);
+    expect(res.body.recovered).toBe(0);
+    expect((await playerRow()).sleepingSince).toBeNull();
+  });
+
+  /**
+   * **A sleeping farmer cannot work.** Otherwise a player would lie in bed
+   * and till at the same time — nonsense, and a way to farm through the one
+   * period the game is giving energy back.
+   */
+  it('refuses farm actions while asleep', async () => {
+    const [plotId] = await unlockedPlotIds();
+    await client.post('/api/farm/sleep', { idempotencyKey: newKey() });
+
+    const res = await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+
+    expect(res.status).toBe(409);
+    expect(res.code).toBe('ASLEEP');
+  });
+
+  it('lets them work again the moment they get up', async () => {
+    const [plotId] = await unlockedPlotIds();
+    await client.post('/api/farm/sleep', { idempotencyKey: newKey() });
+    await client.post('/api/farm/wake', { idempotencyKey: newKey() });
+
+    const res = await client.post('/api/farm/till', { plotId, idempotencyKey: newKey() });
+    expect(res.status, res.code).toBe(200);
+  });
+
+  /**
+   * The bar fills between polls with nothing having run server-side, which is
+   * the whole point of computing it on read — the client can interpolate from
+   * `fullInMs` instead of polling for a number that only a job could move.
+   */
+  it('reports a filling bar on the player view while asleep', async () => {
+    await asleepFor(SLEEP_DURATION_MS / 4);
+
+    const state = await client.get('/api/farm');
+
+    expect(state.body.player.energy.isSleeping).toBe(true);
+    expect(state.body.player.energy.current).toBe(Math.floor(energyCapForLevel(1) / 4));
+    expect(state.body.player.energy.fullInMs).toBeGreaterThan(0);
+  });
+
+  it('replays a retried sleep without moving the clock', async () => {
+    const key = newKey();
+    const first = await client.post('/api/farm/sleep', { idempotencyKey: key });
+    const again = await client.post('/api/farm/sleep', { idempotencyKey: key });
+
+    expect(again.status).toBe(200);
+    expect(again.body.sleepingSince).toBe(first.body.sleepingSince);
   });
 });

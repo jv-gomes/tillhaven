@@ -11,7 +11,14 @@
  * stroke began.
  */
 
-import type { MapDoc, PlacedObject, PlotCell, TileLayer } from './doc.js';
+import type {
+  AnimCell,
+  CollisionCell,
+  MapDoc,
+  PlacedObject,
+  PlotCell,
+  TileLayer,
+} from './doc.js';
 import { layerById } from './doc.js';
 
 /** Nothing on a map this size justifies a deeper stack, and it caps memory. */
@@ -43,7 +50,21 @@ interface PlotEdit {
   after: PlotCell[];
 }
 
-type Edit = TileEdit | ObjectEdit | PlotEdit;
+interface AnimEdit {
+  kind: 'anim';
+  layerId: string;
+  before: AnimCell[];
+  after: AnimCell[];
+}
+
+interface CollisionEdit {
+  kind: 'collision';
+  layerId: string;
+  before: CollisionCell[];
+  after: CollisionCell[];
+}
+
+type Edit = TileEdit | ObjectEdit | PlotEdit | AnimEdit | CollisionEdit;
 
 interface Entry {
   label: string;
@@ -127,6 +148,32 @@ export class History {
     });
   }
 
+  /**
+   * Authored collision, whole-list like the others.
+   *
+   * A stroke of the collision brush can touch dozens of cells, and recording
+   * the whole list per stroke rather than per cell is what makes one drag one
+   * undo — the same shape `recordPlots` uses, for the same reason.
+   */
+  recordCollision(layerId: string, before: CollisionCell[], after: CollisionCell[]): void {
+    this.batch?.edits.push({
+      kind: 'collision',
+      layerId,
+      before: before.map((c) => ({ ...c })),
+      after: after.map((c) => ({ ...c })),
+    });
+  }
+
+  /** The animated-ground twin of `recordPlots`, whole-list like it. */
+  recordAnim(layerId: string, before: AnimCell[], after: AnimCell[]): void {
+    this.batch?.edits.push({
+      kind: 'anim',
+      layerId,
+      before: before.map((c) => ({ ...c })),
+      after: after.map((c) => ({ ...c })),
+    });
+  }
+
   recordPlots(layerId: string, before: PlotCell[], after: PlotCell[]): void {
     this.batch?.edits.push({
       kind: 'plots',
@@ -163,6 +210,12 @@ export class History {
       const source = direction === 'undo' ? edit.before : edit.after;
       layer.objects = source.map((o) => ({ ...o }));
     } else if (edit.kind === 'plots' && layer.kind === 'plots') {
+      const source = direction === 'undo' ? edit.before : edit.after;
+      layer.cells = source.map((c) => ({ ...c }));
+    } else if (edit.kind === 'anim' && layer.kind === 'anim') {
+      const source = direction === 'undo' ? edit.before : edit.after;
+      layer.cells = source.map((c) => ({ ...c }));
+    } else if (edit.kind === 'collision' && layer.kind === 'collision') {
       const source = direction === 'undo' ? edit.before : edit.after;
       layer.cells = source.map((c) => ({ ...c }));
     }

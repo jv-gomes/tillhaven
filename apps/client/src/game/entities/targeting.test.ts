@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FARM_HEIGHT, FARM_WIDTH, TILE_SIZE } from '@tillhaven/shared/config';
+import { FARM_BOUNDS, FARM_HEIGHT, FARM_WIDTH, TILE_SIZE } from '@tillhaven/shared/config';
 import { facedTile, standingTile, tileCentre } from './targeting.js';
 import type { Direction } from './movement.js';
 
@@ -137,6 +137,40 @@ describe('tileCentre', () => {
           tileY,
         });
       }
+    }
+  });
+});
+
+/**
+ * T-16.09 — `facedTile` clamps to the map it is given, not to the farm.
+ *
+ * It read `FARM_WIDTH`/`FARM_HEIGHT` as module constants, which is right for
+ * the one map that existed and silently wrong for a second: a character at the
+ * east wall of a ten-tile room, facing east, would have been told about column
+ * 29 — nineteen columns outside the room, and a tile the interior has no object
+ * on, so the action key would have done nothing with no way to tell why.
+ */
+describe('facedTile clamps to the map it is acting on', () => {
+  const ROOM = { width: 10, height: 8 };
+
+  it('clamps to a small room rather than to the farm', () => {
+    // Standing on the room's last column, facing further east.
+    const atEastWall = { x: (ROOM.width - 1) * TILE_SIZE + TILE_SIZE / 2, y: 4 * TILE_SIZE };
+    expect(facedTile(atEastWall, 'right', ROOM).tileX).toBe(ROOM.width - 1);
+    expect(facedTile(atEastWall, 'right').tileX, 'the farm default still reaches further').toBe(
+      ROOM.width,
+    );
+  });
+
+  it('clamps the south edge too', () => {
+    const atSouthWall = { x: 3 * TILE_SIZE + 8, y: ROOM.height * TILE_SIZE };
+    expect(facedTile(atSouthWall, 'down', ROOM).tileY).toBe(ROOM.height - 1);
+  });
+
+  it('defaults to the farm, so every existing call site is unchanged', () => {
+    const pos = { x: 5 * TILE_SIZE + 8, y: 5 * TILE_SIZE };
+    for (const facing of ['up', 'down', 'left', 'right'] as const) {
+      expect(facedTile(pos, facing)).toEqual(facedTile(pos, facing, FARM_BOUNDS));
     }
   });
 });

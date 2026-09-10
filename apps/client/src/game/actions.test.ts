@@ -5,10 +5,20 @@ import {
   CROPS,
   CROP_IDS,
   ITEMS,
+  ItemCategory,
   type AnimalKind,
 } from '@tillhaven/shared/config';
 import type { AnimalView, PlotView } from '@tillhaven/shared/types';
-import { actionFor, isAnimalIntent, swingFor, type Dispatch, type Target } from './actions.js';
+import {
+  ANIMAL_SWING,
+  actionFor,
+  holdingTool,
+  isAnimalIntent,
+  swingFor,
+  swingForKind,
+  type Dispatch,
+  type Target,
+} from './actions.js';
 
 /**
  * The control scheme, as a matrix (T-9.06).
@@ -22,6 +32,7 @@ import { actionFor, isAnimalIntent, swingFor, type Dispatch, type Target } from 
 
 const HOE = { itemId: 'hoe_wood' };
 const CAN = { itemId: 'watering_can_wood' };
+const AXE = { itemId: 'axe_wood' };
 const SEED = { itemId: 'leek_seeds' };
 const PRODUCE = { itemId: 'leek' };
 
@@ -143,9 +154,33 @@ describe('what it refuses, and why', () => {
     expect(expectRefusal(actionFor(null, growing()))).toMatch(/not ready/i);
   });
 
-  it('asks for empty hands rather than harvesting with produce held', () => {
-    // §5.2: harvest is by hand. The message has to say what to DO about it.
-    expect(expectRefusal(actionFor(PRODUCE, ripe()))).toMatch(/empty/i);
+  /**
+   * T-18.06 (BUG-08). This test used to assert the opposite — that holding
+   * produce refuses with "empty your hands" — and it passed for four phases
+   * while making the game unplayable a row at a time.
+   *
+   * The bug is that harvest FILLS the hand it demanded be empty: produce lands
+   * in the first free backpack slot, which is routinely the equipped one. Pick
+   * a potato into your empty hotbar slot and the next plot refuses. The rule is
+   * "not holding a tool", never "holding nothing", and the two only look alike
+   * until the action's own output lands in your hand.
+   */
+  it('harvests while holding the crop just picked, one plot after another', () => {
+    expect(actionFor(PRODUCE, ripe())).toEqual({ kind: 'harvest', plotId: 'plot-1' });
+    // Any non-tool: the rule is about tools, not about this crop specifically.
+    expect(actionFor({ itemId: 'egg' }, ripe())).toEqual({ kind: 'harvest', plotId: 'plot-1' });
+  });
+
+  /**
+   * The half of the old rule that was real, kept — but both MVP tools are
+   * answered EARLIER with something more useful than "put your tool away": a
+   * can waters a planted plot and a hoe says what is in the way. So the
+   * tool-blocks-harvest branch is defensive today, and the rule it rests on is
+   * pinned directly below instead of through a faked item.
+   */
+  it('still answers the two real tools on a ripe plot, and answers them better', () => {
+    expect(actionFor(CAN, ripe())).toEqual({ kind: 'water', plotId: 'plot-1' });
+    expect(expectRefusal(actionFor(HOE, ripe()))).toMatch(/already growing/i);
   });
 
   it('has something to say for every tool on bare untilled ground', () => {
@@ -236,11 +271,10 @@ describe('the things you stand at', () => {
     }
   });
 
-  it.each(PLACES)('%s is never a farm intent — nothing sent, nothing swung', (_what, target) => {
+  it.each(PLACES)('%s is never a farm intent — nothing is sent', (_what, target) => {
     const dispatch = actionFor(HOE, target);
     expect(dispatch).not.toHaveProperty('plotId');
     expect(dispatch.kind).toBe('open');
-    if (dispatch.kind === 'open') expect(swingFor(dispatch as never)).toBeNull();
   });
 
   /** Each one answers with ITS OWN panel; the tiles are what tell them apart. */
@@ -262,14 +296,37 @@ describe('the things you stand at', () => {
 describe('swingFor', () => {
   it('swings the hoe when tilling and the can when watering', () => {
     expect(swingFor({ kind: 'till', plotId: 'p' })).toBe('hoe');
-    expect(swingFor({ kind: 'water', plotId: 'p' })).toBe('water');
+    expect(swingFor({ kind: 'water', plotId: 'p' })).toBe('watering');
   });
 
-  it('plays nothing for planting or harvesting', () => {
-    // The pack has no kneel or pick animation (T-8.09 measured what exists),
-    // and a hoe swing on a plant would be a lie about what happened.
-    expect(swingFor({ kind: 'plant', plotId: 'p', cropId: 'leek' })).toBeNull();
-    expect(swingFor({ kind: 'harvest', plotId: 'p' })).toBeNull();
+  /**
+   * T-16.02 inverted this. It used to assert planting and harvesting swung
+   * NOTHING, because T-8.09 found no kneel or pick strip in the pack — a true
+   * observation about the five folders anyone had looked at, out of ~45.
+   * `6. Shovel` and `13.3 Carrying - Pick Up` are those animations.
+   */
+  it('crouches to plant and bends to harvest', () => {
+    expect(swingFor({ kind: 'plant', plotId: 'p', cropId: 'leek' })).toBe('plant');
+    expect(swingFor({ kind: 'harvest', plotId: 'p' })).toBe('harvest');
+  });
+
+  /**
+   * The property that matters more than any single mapping: every verb has a
+   * swing. `Farm.act()` and the idle replay both call `playToolAnimation`
+   * unconditionally now, so a `swingForKind` that fell through for a future
+   * verb would not fail to animate — it would pass `undefined` into Phaser,
+   * which plays nothing and logs nothing (the T-8.04 finding).
+   */
+  it('has a swing for every farm verb', () => {
+    const verbs = ['till', 'plant', 'water', 'harvest'] as const;
+    for (const kind of verbs) {
+      expect(swingForKind(kind), kind).toBeTruthy();
+    }
+  });
+
+  /** Both animal actions kneel; the art draws no difference between them. */
+  it('kneels for animals', () => {
+    expect(ANIMAL_SWING).toBe('pet');
   });
 });
 
@@ -352,9 +409,29 @@ describe('facing an animal', () => {
     expect(message).toContain(ITEMS[ANIMALS.chicken.feedItemId]!.name);
   });
 
-  it('refuses a tool, and any other item', () => {
-    for (const held of [HOE, CAN, SEED, PRODUCE]) {
-      expectRefusal(actionFor(held, animal({ hasProduce: true })));
+  /**
+   * T-18.06 (BUG-08), the animal half. This asserted that EVERY held item is
+   * refused, which had the same defect the plot branch had and for the same
+   * reason: the egg lands in the first free backpack slot, which is routinely
+   * the equipped one, so collecting from one chicken refused the next. A coop
+   * is a row of animals the way a field is a row of plots.
+   *
+   * The QA audit only caught the crop case; this one was found by fixing it.
+   */
+  it('collects while holding the egg just collected', () => {
+    for (const held of [PRODUCE, { itemId: 'egg' }, SEED]) {
+      expect(actionFor(held, animal({ hasProduce: true })), JSON.stringify(held)).toEqual({
+        kind: 'collect',
+        animalId: 'animal-1',
+      });
+    }
+  });
+
+  it('refuses a tool, and says both things it could be put away for', () => {
+    for (const held of [HOE, CAN]) {
+      const message = expectRefusal(actionFor(held, animal({ hasProduce: true })));
+      expect(message).toMatch(/tool/i);
+      expect(message).toContain(ITEMS[ANIMALS.chicken.feedItemId]!.name);
     }
   });
 
@@ -414,5 +491,193 @@ describe('facing an animal', () => {
     expect(isAnimalIntent(actionFor(null, ripe()))).toBe(false);
     expect(isAnimalIntent(actionFor(null, { kind: 'chest' }))).toBe(false);
     expect(isAnimalIntent(actionFor(null, null))).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The farmhouse door (T-16.11, D-7)
+ * ------------------------------------------------------------------ */
+
+describe('the farmhouse door', () => {
+  const DOOR: Target = { kind: 'door' };
+
+  /**
+   * D-7 settled: the door is a faced-tile trigger, not a gap you walk through.
+   * That makes it the same shape of interaction as the chest and the merchant,
+   * which is the point — no second input mode to learn.
+   */
+  it('goes inside when faced', () => {
+    expect(actionFor(null, DOOR)).toEqual({ kind: 'enter', what: 'house' });
+  });
+
+  /**
+   * Holding something must not stop you going indoors. A rule like "put your
+   * hoe away first" has nothing behind it, and the player would meet it while
+   * standing on their own porch with no idea what they did wrong.
+   */
+  it('goes inside whatever is in hand', () => {
+    for (const held of [HOE, CAN, SEED, PRODUCE]) {
+      expect(actionFor(held, DOOR)).toEqual({ kind: 'enter', what: 'house' });
+    }
+  });
+
+  /**
+   * `enter` is its own kind rather than a fourth `open.what`, because `open`
+   * means "show DOM over the farm" and this swaps the scene. `Farm.act()`
+   * branches on exactly this distinction.
+   */
+  it('is not an open, a farm intent or an animal intent', () => {
+    const dispatch = actionFor(null, DOOR);
+    expect(dispatch.kind).toBe('enter');
+    expect(dispatch).not.toHaveProperty('plotId');
+    expect(isAnimalIntent(dispatch)).toBe(false);
+  });
+
+  it('says nothing when the character is merely near the house', () => {
+    // Only the door tile answers; `facedTarget` returns null for the rest of
+    // the building, and a null target is silence by design.
+    expect(actionFor(null, null)).toEqual({ kind: 'nothing' });
+  });
+});
+
+/**
+ * T-18.06 — the rule the two hand actions now share.
+ *
+ * Tested directly, and against the REAL item table rather than a fixture,
+ * because both call sites are partly shadowed by earlier branches: a hoe and a
+ * watering can each get a more specific answer before the tool check is
+ * reached on a plot. Asking `holdingTool` itself is what pins the rule for the
+ * tiers D-4 will add — every one of them will be a tool with a `toolKind`, and
+ * none of them will be listed here.
+ */
+describe('holdingTool — what "by hand" actually means', () => {
+  it('is true for every declared tool in the item table', () => {
+    const tools = Object.values(ITEMS).filter((i) => i.category === ItemCategory.TOOL);
+    // If this ever hits zero the assertions below pass by looking at nothing.
+    expect(tools.length).toBeGreaterThan(0);
+    for (const item of tools) {
+      expect(holdingTool({ itemId: item.id }), item.id).toBe(true);
+    }
+  });
+
+  it('is false for everything a hand action can produce or a bag can hold', () => {
+    const carried = Object.values(ITEMS).filter((i) => i.category !== ItemCategory.TOOL);
+    expect(carried.length).toBeGreaterThan(0);
+    for (const item of carried) {
+      expect(holdingTool({ itemId: item.id }), item.id).toBe(false);
+    }
+  });
+
+  it('is false for an empty hand and for an item the config has never heard of', () => {
+    expect(holdingTool(null)).toBe(false);
+    // Unknown ids reach here from a stale client after a config change. The
+    // safe answer is "not a tool": the server re-checks, and refusing an
+    // action over an id we cannot look up would strand the player.
+    expect(holdingTool({ itemId: 'no_such_item' })).toBe(false);
+  });
+
+  /**
+   * Asked of `toolKind`, not of `category`. The two agree today and the
+   * distinction is the point: `toolKind` is what `actionFor` already switches
+   * on for the hoe and the can, so one item declared `category: TOOL` with no
+   * kind would be a tool the control scheme cannot use and this would say so.
+   */
+  it('agrees with the category for every item, which is the invariant', () => {
+    for (const item of Object.values(ITEMS)) {
+      expect(item.toolKind !== undefined, item.id).toBe(item.category === ItemCategory.TOOL);
+    }
+  });
+});
+
+/**
+ * T-20.04 — the action key at a tree.
+ *
+ * Everything here is a **UX gate, never authority**: `chop` on the server looks
+ * the axe up in the player's own inventory and re-checks the tree's state
+ * whatever this decides (§4.1, §5.1). The point of deciding twice is that the
+ * player learns by reading a sentence rather than by watching a swing play and
+ * then be taken back.
+ */
+describe('actionFor at a tree', () => {
+  const standing = { kind: 'tree' as const, view: { id: 't1', x: 3, y: 2, isStanding: true, regrowsInMs: 0 } };
+  const stump = { kind: 'tree' as const, view: { id: 't1', x: 3, y: 2, isStanding: false, regrowsInMs: 60_000 } };
+
+  it('chops a standing tree with an axe', () => {
+    expect(actionFor(AXE, standing)).toEqual({ kind: 'chop', treeId: 't1' });
+  });
+
+  /**
+   * The axe is the only thing that chops, and this loops the alternatives
+   * rather than testing one: a rule that let a hoe fell a tree would be caught
+   * here and nowhere else.
+   */
+  it('refuses without an axe, whatever else is held', () => {
+    for (const held of [HOE, CAN, SEED, PRODUCE, null]) {
+      const result = actionFor(held, standing);
+      expect(result.kind, `holding ${held?.itemId ?? 'nothing'}`).toBe('refused');
+    }
+  });
+
+  /**
+   * A stump refuses rather than doing nothing — "nothing happened" is the one
+   * outcome a player cannot debug. Same reasoning as a locked plot.
+   */
+  it('refuses a stump even with the axe out, and says why', () => {
+    const result = actionFor(AXE, stump);
+    expect(result.kind).toBe('refused');
+    if (result.kind === 'refused') expect(result.message).toMatch(/growing back/i);
+  });
+
+  /**
+   * Order matters: a stump answers "still growing back", not "you need an axe",
+   * because the state of the world is the more useful fact. A player holding a
+   * hoe at a stump has two problems and should hear about the tree first.
+   */
+  it('reports the stump before the missing tool', () => {
+    const result = actionFor(HOE, stump);
+    expect(result.kind).toBe('refused');
+    if (result.kind === 'refused') expect(result.message).toMatch(/growing back/i);
+  });
+
+  it('plays the axe swing for a chop', () => {
+    expect(swingForKind('chop')).toBe('axe');
+  });
+});
+
+/**
+ * T-22.01 / D-21 — the mailbox is the trade post.
+ *
+ * The trade panel went unmounted for eleven phases because *"trading is a
+ * place-based interaction like everything else now, and there is nowhere to do
+ * it yet"*. This is that place, and these pin the two properties that make it
+ * consistent with the other three panels on the same frontage row.
+ */
+describe('actionFor at the mailbox', () => {
+  const mailbox = { kind: 'mailbox' as const };
+
+  it('opens the trade panel', () => {
+    expect(actionFor(null, mailbox)).toEqual({ kind: 'open', what: 'trade' });
+  });
+
+  /**
+   * Whatever is in hand, exactly like the chest, the shipping box and the shop.
+   * A rule such as "put your hoe away to read your post" would be a rule with
+   * nothing behind it — these panels are views of what the player already owns,
+   * not actions on the world.
+   */
+  it('opens whatever is being held', () => {
+    for (const held of [HOE, CAN, AXE, SEED, PRODUCE, null]) {
+      expect(actionFor(held, mailbox), `holding ${held?.itemId ?? 'nothing'}`).toEqual({
+        kind: 'open',
+        what: 'trade',
+      });
+    }
+  });
+
+  /** An `open` intent is not a farm intent: nothing is sent and nothing swings. */
+  it('is an open intent, so no tool is swung at it', () => {
+    const result = actionFor(HOE, mailbox);
+    expect(result.kind).toBe('open');
+    expect(result.kind).not.toBe('refused');
   });
 });

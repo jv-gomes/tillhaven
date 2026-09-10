@@ -72,6 +72,30 @@ export const players = pgTable(
      */
     experience: integer('experience').notNull().default(0),
 
+    /**
+     * Energy spent since the last rest (MVP re-scope).
+     *
+     * **Spent, not remaining**, and the direction matters. The CAP is derived
+     * from farm level (`energyCapForLevel`), so storing what is left would
+     * mean a level-up silently changed a stored number, and every cap retune
+     * would need a migration over every row. Storing what has been used keeps
+     * the config free to move: `current = cap(level) - energySpent`.
+     *
+     * Reset to 0 by a full night's sleep, and to a partial value by waking
+     * early — see `energySpentAfterSleep`.
+     */
+    energySpent: integer('energy_spent').notNull().default(0),
+
+    /**
+     * When the player lay down, epoch ms, or null if awake.
+     *
+     * The whole of sleeping. There is no timer and no job: how much energy a
+     * sleeping player has is `now - sleepingSince` against
+     * `SLEEP_DURATION_MS`, settled whenever anyone reads it (§4.2) — the same
+     * shape as crop growth and shipping payouts.
+     */
+    sleepingSince: epochMs('sleeping_since'),
+
     /** VIP expiry, epoch ms. null = never purchased or fully expired. */
     vipUntil: epochMs('vip_until'),
     /** Set on refund or chargeback; blocks VIP benefits and trading. */
@@ -165,9 +189,15 @@ export const farms = pgTable(
      * to grow (chop, mine, fish — §5.3), and adding a member to a JSON array is
      * a config change while adding a column is a migration. The server is the
      * only reader and validates it against the shared const with Zod on the way
-     * in (§8), so nothing downstream trusts what is in here. Default `'[]'` —
-     * enabling idle with no chores selected does nothing, which is the honest
-     * reading of "I turned it on but chose nothing".
+     * in (§8), so nothing downstream trusts what is in here. Default `'[]'` for
+     * a farm that has never switched idle on.
+     *
+     * **`idleEnabled` with `'[]'` can no longer be reached through the API**
+     * (T-18.07): `idleSettingsSchema` refuses it, because it takes the farm
+     * away from the player in exchange for a farmer that cannot act. The
+     * simulator still tolerates the pair and does nothing with it — rows
+     * written before that rule existed have to keep working, and "does nothing"
+     * is the only sane reading of a chore list with no chores in it.
      */
     idleTasks: text('idle_tasks').notNull().default('[]'),
     /**
@@ -250,6 +280,42 @@ export const plots = pgTable(
   ],
 );
 
+/**
+ * The farm's trees, one row per authored position (T-20.01).
+ *
+ * **Rows, not a bitmask on `farms`.** A tree needs its own `chopped_at` to
+ * regrow independently (§4.2 — computed on read, no job), and rows are what
+ * makes "which tree" expressible in a payload without the client sending
+ * coordinates the server would then have to trust (§4.1). The client names a
+ * tree by id, exactly as it names a plot.
+ *
+ * `x`/`y` are copied from `TREES` at registration and are the SAME coordinates
+ * `farm.json` bakes in via `MAP_OBJECTS`. That duplication is deliberate and
+ * bounded: the map is static art shared by every farm, while these rows are one
+ * farm's state, and a tree that has been chopped has to be a fact about a farm.
+ * `farmLayout.ts` remains the single authority for where a tree stands —
+ * nothing here may invent a position.
+ */
+export const trees = pgTable(
+  'trees',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    farmId: uuid('farm_id')
+      .notNull()
+      .references(() => farms.id, { onDelete: 'cascade' }),
+    x: integer('x').notNull(),
+    y: integer('y').notNull(),
+    /** Null means never chopped. Regrowth is derived from this, never stored. */
+    choppedAt: epochMs('chopped_at'),
+  },
+  (t) => [
+    index('trees_farm_idx').on(t.farmId),
+    // One tree per cell per farm, for the same reason plots have this: a
+    // duplicate row is a tree you could chop twice for two drops.
+    uniqueIndex('trees_farm_pos_idx').on(t.farmId, t.x, t.y),
+  ],
+);
+
 export const animals = pgTable(
   'animals',
   {
@@ -313,6 +379,61 @@ export const furnitureOwned = pgTable(
     quantity: integer('quantity').notNull(),
   },
   (t) => [uniqueIndex('furniture_owned_pk').on(t.playerId, t.furnitureId)],
+);
+
+/* ------------------------------------------------------------------ *
+ * Outdoor decoration (T-15.17)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Decoration placed on the FARM, as distinct from furniture placed in the
+ * house.
+ *
+ * **Two tables rather than a `surface` column on the furniture pair (D-11).**
+ * They look alike, and they are not the same thing: furniture goes into a bare
+ * 10x8 rectangle with nothing in it, while decor goes onto a real map and has
+ * to be validated against plots, water, map objects, yard slots and buildings
+ * *at the tier the farm currently has* — which means reading a `farms` row
+ * inside the placement transaction. Adding that to the furniture module would
+ * mean reworking its `.for('update')` locks to serve a feature it does not
+ * have, in code the running game has not reached since T-11.05.
+ *
+ * The game is pre-launch, so two tables cost one migration and no backfill.
+ */
+export const decorPlacements = pgTable(
+  'decor_placements',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    decorId: text('decor_id').notNull(),
+    /** Top-left cell, in TILE coordinates. Matches `decorFootprint`. */
+    x: integer('x').notNull(),
+    y: integer('y').notNull(),
+    placedAt: epochMs('placed_at').notNull(),
+  },
+  (t) => [index('decor_player_idx').on(t.playerId)],
+);
+
+/**
+ * Decoration a player owns but has not put down.
+ *
+ * Same shape and same reasoning as `furniture_owned`: decor has no stack limit,
+ * no slot, and cannot be traded (§7), so it does not belong in
+ * `inventory_items` — putting it there would mean every backpack-capacity check
+ * had to learn about a category that never occupies a slot.
+ */
+export const decorOwned = pgTable(
+  'decor_owned',
+  {
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    decorId: text('decor_id').notNull(),
+    quantity: integer('quantity').notNull(),
+  },
+  (t) => [uniqueIndex('decor_owned_pk').on(t.playerId, t.decorId)],
 );
 
 /* ------------------------------------------------------------------ *
@@ -487,6 +608,117 @@ export const purchases = pgTable(
  * value would quietly rewrite history, and §5.8 wants every faucet accounted
  * for by what it actually paid. Null until settlement, alongside `paidAt`.
  */
+/**
+ * Which milestones a player has already been paid for (T-30.07).
+ *
+ * **The only state the whole milestone feature adds.** Whether a milestone is
+ * EARNED is derived on read from counters that already exist
+ * (`config/milestones.ts`); this table answers the one question derivation
+ * cannot — has it been claimed.
+ *
+ * The unique constraint is the actual guard against double-claiming, not the
+ * service's check. Two requests can both read "not yet claimed" and both
+ * proceed; only one can insert. That makes the race impossible rather than
+ * unlikely, which is the standard §4.3 sets for anything that mints value.
+ */
+export const milestoneClaims = pgTable(
+  'milestone_claims',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    /** The `Milestone.id` from shared config. Text, not an enum: the table of
+     *  milestones is config and will grow, and a migration per milestone would
+     *  be absurd. */
+    milestoneId: text('milestone_id').notNull(),
+    claimedAt: epochMs('claimed_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('milestone_claims_player_milestone_key').on(t.playerId, t.milestoneId),
+    index('milestone_claims_player_idx').on(t.playerId),
+  ],
+);
+
+/**
+ * Quests a player has accepted, and whether they have been turned in (T-33.05).
+ *
+ * **One row per player per quest, and the unique index is the anti-double-pay.**
+ * It is exactly `milestone_claims`' shape and for exactly its reason: turning in
+ * twice must pay once, and two concurrent requests are stopped by the database
+ * rather than by a read-then-write the second request can slip past.
+ *
+ * `completedAt` null means accepted-but-not-turned-in. That is why this is not
+ * simply a claims table: a quest has a middle state a milestone does not have,
+ * and the board (T-33.06) needs to know which quests are in hand.
+ *
+ * The quest id is text for the same reason the milestone id is: the table of
+ * quests is config and will grow, and a migration per quest would be absurd.
+ */
+/**
+ * Casts (T-34.02).
+ *
+ * **The fish is rolled and stored at CAST time, not at reel time**, which is
+ * what makes the reel a judgement about the clock rather than about the roll.
+ * The alternative — roll on reel — means the outcome depends on when the player
+ * clicks, and a client that could nudge that timing could nudge its luck.
+ *
+ * `fishId` is written here and **never sent to the client until a reel
+ * succeeds** (§4.1). A client that knew what was on the line could throw back
+ * the ones it did not want, which is the whole rarity system defeated by a
+ * refresh.
+ *
+ * `reeledAt` null means the line is still in the water. There is at most one
+ * such row per player, enforced by a partial unique index — casting twice
+ * without reeling is not a race the game has to resolve, it is a thing that
+ * cannot happen.
+ */
+export const casts = pgTable(
+  'casts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    castAt: epochMs('cast_at').notNull(),
+    /** When the fish bites. Drawn per cast; the client is told this and nothing else. */
+    biteAt: epochMs('bite_at').notNull(),
+    /** The pre-rolled outcome. Secret until the reel lands. */
+    fishId: text('fish_id').notNull(),
+    reeledAt: epochMs('reeled_at'),
+    /** Null while in the water; true if the reel landed, false if it did not. */
+    landed: boolean('landed'),
+  },
+  (t) => [
+    /*
+     * One line in the water at a time. A PARTIAL index — only rows still
+     * unreeled — so a player's history does not collide with their next cast.
+     */
+    uniqueIndex('casts_one_open_per_player')
+      .on(t.playerId)
+      .where(sql`${t.reeledAt} is null`),
+    index('casts_player_idx').on(t.playerId),
+  ],
+);
+
+export const questProgress = pgTable(
+  'quest_progress',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    questId: text('quest_id').notNull(),
+    acceptedAt: epochMs('accepted_at').notNull(),
+    /** Null until turned in. Set once, in the same transaction that pays. */
+    completedAt: epochMs('completed_at'),
+  },
+  (t) => [
+    uniqueIndex('quest_progress_player_quest_key').on(t.playerId, t.questId),
+    index('quest_progress_player_idx').on(t.playerId),
+  ],
+);
+
 export const shipments = pgTable(
   'shipments',
   {

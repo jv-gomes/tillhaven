@@ -315,3 +315,113 @@ export function buildingCap(
 export function nextBuildingCost(building: AnimalBuilding, tier: number): number | null {
   return BUILDING_TIERS[building].find((t) => t.tier === tier + 1)?.cost ?? null;
 }
+
+/* ------------------------------------------------------------------ *
+ * Wander (T-15.12)
+ * ------------------------------------------------------------------ */
+
+/**
+ * How far, and how often, an animal drifts around its yard slot.
+ *
+ * **Chickens stay in their tile; cows roam south into the open band** (T-16.04
+ * and T-16.05, D-15). The split is the art's, not a preference:
+ *
+ *   - The chicken sheet has **no walk cycle** — measured in T-15.10: every row
+ *     is the same side view and no row is any other row mirrored — so a chicken
+ *     translated a whole tile would be *sliding*, not walking. What its sheet
+ *     does carry is pecking, nesting and lying-down rows, and T-16.05 spends
+ *     them on a behaviour routine instead. Pose variety is what it can sell.
+ *   - The cow sheet carries a genuine 4-phase leg cycle with separate front and
+ *     back views (rows 0/1/2), drawn for exactly this and never once played as
+ *     movement before T-16.04.
+ *
+ * Until T-16.04 nothing left its tile at all, because `Animal.bounds()`
+ * hit-tests an animal's HOME slot and a sprite that wandered off it would mean
+ * walking up to feed something and finding the tile it answers on is not the
+ * tile it is standing on. T-16.06 resolves that (D-16) by letting a roaming
+ * cow's box follow it — which is only safe because the roam is vertical, so
+ * two cows can never share a column.
+ *
+ * `radiusX` is a half-extent either side of the slot; `radiusY` is upward ONLY
+ * (see `offsetFor` — a slot puts the animal's feet on its tile's bottom edge,
+ * so a symmetric vertical drift would spend half of every leg on the next tile
+ * down). Both must stay under half a tile: for a chicken that is what keeps it
+ * on the tile its `bounds()` answers on, and for a cow it is what keeps the
+ * roam a whole number of tiles rather than a smear across two. A test pins it
+ * rather than trusting the numbers to look small.
+ *
+ * A cow's `radiusX` is not much larger than a chicken's despite its yard being
+ * spaced twice as wide, and that is now load-bearing rather than incidental:
+ * see `roamTilesUp` for why a cow has no horizontal room at all at full
+ * occupancy.
+ *
+ * `legMs` is how long one drift takes end to end, and `moveFraction` how much
+ * of that is spent moving rather than posing — a cow that ambles for two
+ * seconds and then chews for two reads as an animal; one that moves constantly
+ * reads as a screensaver.
+ */
+export const WANDER = {
+  chicken: {
+    radiusX: 5,
+    radiusY: 4,
+    legMs: 2600,
+    moveFraction: 0.45,
+    roamTilesUp: 0,
+    roamTilesDown: 0,
+  },
+  cow: {
+    radiusX: 6,
+    radiusY: 4,
+    legMs: 4200,
+    moveFraction: 0.5,
+    // Down only. Two of the nine cow columns have a maple tree's base directly
+    // above them — see `roamTilesUp`.
+    roamTilesUp: 0,
+    roamTilesDown: 2,
+  },
+} as const satisfies Record<AnimalKind, WanderTuning>;
+
+export interface WanderTuning {
+  /** Half-extent in px from the slot centre, horizontally. */
+  readonly radiusX: number;
+  readonly radiusY: number;
+  /** One drift, end to end, in ms. */
+  readonly legMs: number;
+  /** Fraction of a leg spent moving; the rest is spent holding a pose. */
+  readonly moveFraction: number;
+  /**
+   * Whole tiles this kind may leave its home tile by, VERTICALLY (T-16.04).
+   *
+   * Zero for chickens, and that is D-15 rather than a value waiting to be
+   * tuned: their sheet has no walk cycle, so a translating chicken slides.
+   *
+   * **Vertical only**, because horizontally there is no room at all.
+   * `BARN_YARD` spaces cows 2 tiles apart and the cow sprite is 32px —
+   * precisely 2 tiles — so at the worst case the barn supports (tier-2 cap 6
+   * plus VIP 3 = 9 cows, which is every slot) two neighbours abut exactly.
+   * Roaming sideways would overlap them, and once `Animal.bounds()` follows the
+   * sprite (T-16.06) that is not merely ugly: it is two cows answering on one
+   * tile, which is the D-14 trap in a new costume.
+   *
+   * **Downward only, and that was found by a test rather than by looking.** The
+   * yard row is y=18. Two of the nine cow columns — x=2 and x=18 — have a maple
+   * tree's collision base sitting directly above them at y=17, so a cow allowed
+   * one tile up would spend part of its life standing inside a tree, in a spot
+   * the player cannot walk to. Nothing prevents that at runtime: animals are
+   * not solid (D-14) and the wander is pure arithmetic over a slot that never
+   * consults the block map. Below the row the band really is empty for every
+   * column, so the roam goes south into it.
+   *
+   * `reachability.test.ts` proves all of this against the worst-case world at
+   * full occupancy rather than trusting this comment — which is how the trees
+   * turned up, after an earlier hand-check of the same band mis-anchored the
+   * tree footprints and declared it clear.
+   */
+  readonly roamTilesUp: number;
+  readonly roamTilesDown: number;
+}
+
+/** True when a kind roams beyond its home tile at all (T-16.04). */
+export function roams(kind: AnimalKind): boolean {
+  return WANDER[kind].roamTilesUp > 0 || WANDER[kind].roamTilesDown > 0;
+}

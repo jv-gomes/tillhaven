@@ -122,8 +122,14 @@ export function travelMs(from: Position, to: Position, speed = WALK_SPEED): numb
 }
 
 export interface ReplayPlan {
-  /** The plot being worked, so a changed action is recognised as changed. */
-  readonly plotId: string;
+  /**
+   * What is being worked, so a changed action is recognised as changed.
+   *
+   * A plot id for every task but `chop`, which works a tree (T-20.06). Named
+   * for the role rather than the kind, because that is all this is used for —
+   * comparing one job to the next.
+   */
+  readonly targetId: string;
   /** The instant the server says the action lands. */
   readonly at: number;
   readonly kind: IdleNextAction['kind'];
@@ -159,17 +165,23 @@ export interface ReplayPlan {
 export function planReplay(
   from: Position,
   action: IdleNextAction | null,
-  plotTile: TilePoint | null,
+  /** The tile the action happens ON — a plot's cell, or a tree's trunk. */
+  targetTile: TilePoint | null,
   speed = WALK_SPEED,
 ): ReplayPlan | null {
-  if (!action || !plotTile) return null;
+  if (!action || !targetTile) return null;
 
-  const approach = approachFor(from, plotTile);
+  const targetId = action.plotId ?? action.treeId;
+  // An action naming neither cannot be walked to. Nothing produces one today;
+  // returning null beats inventing a destination.
+  if (targetId === undefined) return null;
+
+  const approach = approachFor(from, targetTile);
   const target = feetOnTile(approach.tile);
   const travel = travelMs(from, target, speed);
 
   return {
-    plotId: action.plotId,
+    targetId,
     at: action.at,
     kind: action.kind,
     target,

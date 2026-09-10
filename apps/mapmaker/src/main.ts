@@ -6,7 +6,18 @@
  * is pure or takes its state explicitly, so the messy part is confined here.
  */
 
-import { TILE_SIZE } from '@tillhaven/shared/config';
+import {
+  AUTHORED_GROUND_ANIMATIONS,
+  BUILTIN_GROUND_ANIMATIONS,
+  SUBTILE_RESOLUTION,
+  TILE_SIZE,
+  GROUND_SCATTER,
+  WATER_ANIM_FPS,
+  animatedSheet,
+  isBuiltinAnimationId,
+  libraryProblems,
+  type GroundAnimation,
+} from '@tillhaven/shared/config';
 
 import {
   createDoc,
@@ -14,6 +25,8 @@ import {
   indexOf,
   inBounds,
   objectLayer,
+  animLayer,
+  collisionLayer,
   plotLayer,
   resizeDoc,
   tileLayers,
@@ -44,11 +57,28 @@ import { fillRect, floodFill, rectFromDrag, type Rect } from './tools/fill.js';
 import { eraseTerrain, paintTerrain } from './tools/autotile.js';
 import { deleteObject, moveObject, objectAt, placeObject, snapToGrid } from './tools/objects.js';
 import { clearPlots, reorderPlot, togglePlot } from './tools/plots.js';
+import { clearAnims, renameAnimId, setAnim } from './tools/anim.js';
+import {
+  addFrame,
+  createAnimation,
+  deleteAnimation,
+  duplicateAnimation,
+  moveFrame,
+  overrideAnimation,
+  removeFrameAt,
+  renameAnimation,
+  setAnimationFps,
+  setAnimationId,
+  takenIds,
+  type AnimLibrary,
+} from './tools/animLibrary.js';
+import { clearCollision, paintCells, tileCells } from './tools/collision.js';
 
 import { loadAllImages } from './render/images.js';
 import {
   drawMap,
   fitToCanvas,
+  hasAnimatedTiles,
   screenToMapPixel,
   screenToTile,
   type Overlay,
@@ -63,14 +93,39 @@ import {
   type PaletteSelection,
 } from './render/paletteView.js';
 
-import { deserialize, type TiledMap } from './io/tiled.js';
-import { DEFAULT_MAP_NAME, downloadMap, saveTerrainSets, saveToProject } from './io/save.js';
+import { deserialize, serialize, type TiledMap } from './io/tiled.js';
+import {
+  DEFAULT_MAP_NAME,
+  downloadMap,
+  saveGroundAnimations,
+  saveTerrainSets,
+  saveToProject,
+} from './io/save.js';
 import { loadAutosave, scheduleAutosave } from './io/autosave.js';
 
-import { renderLayers, renderObjectInfo, renderPlots } from './ui/panels.js';
+import {
+  AnimPreview,
+  renderAnimPanel,
+  renderCollisionCount,
+  renderLayers,
+  renderObjectInfo,
+  renderPlots,
+  type AnimPanelDom,
+} from './ui/panels.js';
 import { renderCalibrator, renderPreview } from './ui/terrainPanel.js';
 
-const TOOLS = ['paint', 'terrain', 'rect', 'fill', 'pick', 'erase', 'object', 'plot'] as const;
+const TOOLS = [
+  'paint',
+  'terrain',
+  'rect',
+  'fill',
+  'pick',
+  'erase',
+  'object',
+  'plot',
+  'anim',
+  'collide',
+] as const;
 type Tool = (typeof TOOLS)[number];
 
 const MAX_ZOOM = 12;
@@ -89,6 +144,9 @@ interface DragState {
   grabDX: number;
   grabDY: number;
   moved: boolean;
+  /** Modifiers as the stroke STARTED. See `beginDrag`. */
+  shift: boolean;
+  alt: boolean;
 }
 
 /**
@@ -136,10 +194,18 @@ interface Editor {
   terrainSets: TerrainSet[];
   terrainSetId: string;
   showGrid: boolean;
+  /** Hatch the house/coop/barn ground, which lives in no layer of the doc. */
+  showReserved: boolean;
   dimInactive: boolean;
   hover: { x: number; y: number } | null;
   marquee: Rect | null;
   selectedObjectId: number | null;
+  /** Which ground animation the anim brush stamps. */
+  animId: string;
+  /** The AUTHORED animations, i.e. the ones this editor may change. */
+  animLibrary: AnimLibrary;
+  /** Set by any library edit, cleared by a successful save. */
+  animDirty: boolean;
   drag: DragState | null;
   panning: { x: number; y: number; panX: number; panY: number } | null;
   spaceHeld: boolean;
@@ -197,7 +263,17 @@ const editor: Editor = {
   stamp: EMPTY_STAMP,
   terrainSets: loadTerrainSets(),
   terrainSetId: loadTerrainSets()[0]?.id ?? 'grass',
+  animId: BUILTIN_GROUND_ANIMATIONS[0]?.id ?? AUTHORED_GROUND_ANIMATIONS[0]?.id ?? '',
+  // Seeded from the generated file, which is what the game is reading right
+  // now. Editing here diverges from it until "Save animations" writes it back —
+  // hence `animDirty`, and hence the unload guard further down.
+  animLibrary: AUTHORED_GROUND_ANIMATIONS.map((a) => ({ ...a, frames: a.frames.map((f) => ({ ...f })) })),
+  animDirty: false,
   showGrid: true,
+  // On by default: this is the only thing on the farm that occupies ground
+  // without being in the map, so it is the one overlay whose absence is a trap
+  // rather than a preference (M6).
+  showReserved: true,
   dimInactive: false,
   hover: null,
   marquee: null,
@@ -234,6 +310,158 @@ function status(message: string, kind: 'ok' | 'err' | '' = ''): void {
 }
 
 /* ------------------------------------------------------------------ *
+ * The animation library
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the panel shows: built-ins first, then the authored ones.
+ *
+ * Recomputed on every render rather than cached, because the alternative is a
+ * cache invalidated by nine different edits and the failure — a dropdown one
+ * edit behind — is the kind you stare at for a while.
+ *
+ * This mirrors `mergeAnimations` in shared config on purpose: the editor must
+ * resolve an id exactly the way the game will, or the frames you aim with are
+ * not the frames that play.
+ */
+function mergedAnimations(): readonly GroundAnimation[] {
+  const merged = new Map<string, GroundAnimation>();
+  for (const animation of BUILTIN_GROUND_ANIMATIONS) merged.set(animation.id, animation);
+  for (const animation of editor.animLibrary) merged.set(animation.id, animation);
+  return [...merged.values()];
+}
+
+/** Every id in play, so a new one cannot collide with a built-in either. */
+function allAnimIds(): string[] {
+  return takenIds(editor.animLibrary, BUILTIN_GROUND_ANIMATIONS);
+}
+
+const animPreview = new AnimPreview(el('anim-play'));
+
+function animPanelDom(): AnimPanelDom {
+  return {
+    select: el<HTMLSelectElement>('anim-select'),
+    count: el('anim-count'),
+    name: el<HTMLInputElement>('anim-name'),
+    id: el<HTMLInputElement>('anim-id'),
+    fps: el<HTMLInputElement>('anim-fps'),
+    strip: el('anim-strip'),
+    notes: el('anim-notes'),
+    deleteButton: el<HTMLButtonElement>('anim-delete'),
+    addFrameButton: el<HTMLButtonElement>('anim-add-frame'),
+  };
+}
+
+/**
+ * Applies a library edit and repaints.
+ *
+ * Every mutation funnels through here so "mark dirty, re-render" cannot be
+ * forgotten at one of a dozen call sites — which would show up as an editor
+ * that looks like it accepted an edit and then saves without it.
+ *
+ * **Library edits are NOT on the map's undo stack.** `History` records layer
+ * snapshots for the document being authored; the library is a different file
+ * with a different lifetime, and putting the two on one stack would make Ctrl+Z
+ * after a save undo something the game has already loaded.
+ */
+function updateLibrary(next: AnimLibrary): void {
+  editor.animLibrary = next;
+  editor.animDirty = true;
+  refreshPanels();
+}
+
+/**
+ * The library the selected animation can actually be edited in.
+ *
+ * **A built-in is forked into an authored override on its first edit**, under
+ * the SAME id, so the change reaches every cell already stamped with it. That is
+ * what the merge in shared config resolves authored-over-built-in for, and for a
+ * while the panel refused to let anyone reach it: built-ins were read-only and
+ * Duplicate was offered instead. Duplicate gives a NEW id, so the map went on
+ * showing the animation you were trying to change.
+ *
+ * Called by every mutating handler rather than by a "make editable" button:
+ * having to arm the panel before typing in it is a step whose only purpose is to
+ * ask whether you meant the thing you just did.
+ */
+function editableLibrary(): AnimLibrary {
+  const source = mergedAnimations().find((a) => a.id === editor.animId);
+  if (!source || !isBuiltinAnimationId(source.id)) return editor.animLibrary;
+  return overrideAnimation(editor.animLibrary, source);
+}
+
+const animPanelHandlers = {
+  onSelect(id: string): void {
+    editor.animId = id;
+    refreshPanels();
+  },
+
+  onRename(name: string): void {
+    updateLibrary(renameAnimation(editableLibrary(), editor.animId, name));
+  },
+
+  onFps(fps: number): void {
+    updateLibrary(setAnimationFps(editableLibrary(), editor.animId, fps));
+  },
+
+  /**
+   * Renaming an id, and repointing the open map with it.
+   *
+   * The map stores the id and nothing else, so this is the one library edit
+   * that can break a map. Cells in the map on screen are re-pointed
+   * automatically — that is a strict improvement on orphaning them — but any
+   * OTHER saved map that stamped the old id is beyond reach here, which is what
+   * the confirmation is for.
+   */
+  onChangeId(nextId: string): void {
+    const from = editor.animId;
+    if (nextId === from) return;
+
+    const next = setAnimationId(editor.animLibrary, from, nextId, allAnimIds());
+    if (!next) {
+      status(`"${nextId}" is not a valid free id — lower-case, digits and dashes.`, 'err');
+      refreshPanels();
+      return;
+    }
+
+    const layer = animLayer(editor.doc);
+    const stamped = layer?.cells.filter((c) => c.animId === from).length ?? 0;
+    if (
+      stamped > 0 &&
+      !window.confirm(
+        `${stamped} cell(s) on this map stamp "${from}". They will be repointed at ` +
+          `"${nextId}". Any OTHER saved map using "${from}" will be orphaned. Continue?`,
+      )
+    ) {
+      refreshPanels();
+      return;
+    }
+
+    if (layer && stamped > 0) {
+      editor.history.begin('rename animation');
+      renameAnimId(layer, editor.history, from, nextId);
+      editor.history.commit();
+      requestDraw();
+    }
+
+    editor.animId = nextId;
+    updateLibrary(next);
+    status(
+      stamped > 0 ? `Renamed to "${nextId}" and repointed ${stamped} cell(s).` : `Renamed to "${nextId}".`,
+      'ok',
+    );
+  },
+
+  onRemoveFrame(index: number): void {
+    updateLibrary(removeFrameAt(editableLibrary(), editor.animId, index));
+  },
+
+  onMoveFrame(from: number, to: number): void {
+    updateLibrary(moveFrame(editableLibrary(), editor.animId, from, to));
+  },
+};
+
+/* ------------------------------------------------------------------ *
  * Rendering
  * ------------------------------------------------------------------ */
 
@@ -241,6 +469,7 @@ function overlay(): Overlay {
   return {
     showGrid: editor.showGrid,
     showPlots: true,
+    showReserved: editor.showReserved,
     hover: editor.hover,
     marquee: editor.marquee,
     brushW: editor.tool === 'paint' || editor.tool === 'erase' ? editor.stamp.w : 1,
@@ -248,8 +477,29 @@ function overlay(): Overlay {
     selectedObjectId: editor.selectedObjectId,
     activeLayerId: editor.activeLayerId,
     dimInactive: editor.dimInactive,
+    // Only while the collision brush is in hand: a 90x66 lattice over the whole
+    // map is unreadable the rest of the time.
+    showCells: editor.tool === 'collide',
+    animStep: animStep,
   };
 }
+
+/**
+ * The clock for animated SHEETS (`ANIMATED_SHEETS`) — water, mainly.
+ *
+ * **The editor shows what the game will show.** Water painted here animates
+ * there, so it animates here: a shoreline you can only judge after saving,
+ * alt-tabbing and reloading is one you are placing blind.
+ *
+ * Held still when the map has nothing animated in it, because a tool that
+ * repaints four times a second forever, for nothing, is a tool that never idles.
+ */
+let animStep = 0;
+window.setInterval(() => {
+  if (!hasAnimatedTiles(editor.doc)) return;
+  animStep += 1;
+  requestDraw();
+}, 1000 / WATER_ANIM_FPS);
 
 let frameQueued = false;
 function requestDraw(): void {
@@ -328,6 +578,19 @@ function refreshPanels(): void {
       requestDraw();
     },
   });
+
+  const animations = mergedAnimations();
+  renderAnimPanel(
+    animPanelDom(),
+    editor.doc,
+    animations,
+    new Set(editor.animLibrary.map((a) => a.id)),
+    editor.animId,
+    animPanelHandlers,
+  );
+  animPreview.show(animations.find((a) => a.id === editor.animId));
+
+  renderCollisionCount(el('collide-count'), editor.doc);
 
   renderObjectInfo(el('object-info'), editor.doc, editor.selectedObjectId);
 
@@ -422,7 +685,15 @@ function terrainAt(cells: Array<[number, number]>, drag: DragState, erase: boole
   requestDraw();
 }
 
-function beginDrag(tool: Tool, x: number, y: number, px: number, py: number, alt: boolean): void {
+function beginDrag(
+  tool: Tool,
+  x: number,
+  y: number,
+  px: number,
+  py: number,
+  alt: boolean,
+  shift: boolean,
+): void {
   const drag: DragState = {
     tool,
     startX: x,
@@ -434,12 +705,19 @@ function beginDrag(tool: Tool, x: number, y: number, px: number, py: number, alt
     grabDX: 0,
     grabDY: 0,
     moved: false,
+    shift,
+    alt,
   };
   // Refuse before opening a history batch, so a rejected click leaves no trace.
   const needsStamp = tool === 'paint' || tool === 'rect' || tool === 'fill';
   if ((needsStamp || tool === 'erase' || tool === 'terrain') && !canEditTiles(needsStamp)) {
     return;
   }
+  // Remembered on the drag so the whole stroke keeps the modifier it started
+  // with — releasing Shift mid-drag should not switch a tile-wide stroke to a
+  // cell-wide one halfway across.
+  drag.shift = shift;
+  drag.alt = alt;
 
   editor.drag = drag;
   editor.history.begin(tool);
@@ -461,6 +739,20 @@ function beginDrag(tool: Tool, x: number, y: number, px: number, py: number, alt
     case 'fill': {
       const layer = activeTileLayer();
       if (layer && floodFill(editor.doc, layer, editor.history, editor.stamp, x, y)) requestDraw();
+      break;
+    }
+    case 'anim': {
+      const layer = animLayer(editor.doc);
+      if (layer) {
+        // Alt erases, matching the terrain brush. Stamping what is already
+        // there is a no-op and consumes no undo slot (see `setAnim`).
+        setAnim(editor.doc, layer, editor.history, x, y, alt ? null : editor.animId);
+        requestDraw();
+      }
+      break;
+    }
+    case 'collide': {
+      paintCollisionAt(px, py, alt, shift);
       break;
     }
     case 'plot': {
@@ -506,6 +798,29 @@ function beginDrag(tool: Tool, x: number, y: number, px: number, py: number, alt
   }
 }
 
+/**
+ * Paints one collision cell — or one whole tile, with Shift.
+ *
+ * **Takes map PIXELS, not tiles**, because a cell is a third of a tile and the
+ * tile coordinate has already thrown away which third the pointer was in. Every
+ * other tool here works in tiles, which is exactly why this one has to say
+ * loudly that it does not.
+ */
+function paintCollisionAt(px: number, py: number, erase: boolean, wholeTile: boolean): void {
+  const layer = collisionLayer(editor.doc);
+  if (!layer) return;
+
+  const size = editor.doc.tileWidth / SUBTILE_RESOLUTION;
+  const cx = Math.floor(px / size);
+  const cy = Math.floor(py / size);
+
+  const cells = wholeTile
+    ? tileCells(Math.floor(px / editor.doc.tileWidth), Math.floor(py / editor.doc.tileHeight))
+    : [{ cx, cy }];
+
+  if (paintCells(editor.doc, layer, editor.history, cells, !erase)) requestDraw();
+}
+
 function continueDrag(x: number, y: number, px: number, py: number, alt: boolean): void {
   const drag = editor.drag;
   if (!drag) return;
@@ -526,6 +841,24 @@ function continueDrag(x: number, y: number, px: number, py: number, alt: boolean
       break;
     case 'terrain':
       terrainAt(path, drag, alt);
+      break;
+    case 'anim': {
+      const layer = animLayer(editor.doc);
+      if (!layer) break;
+      for (const [cx, cy] of path) {
+        setAnim(editor.doc, layer, editor.history, cx, cy, drag.alt ? null : editor.animId);
+      }
+      requestDraw();
+      break;
+    }
+    case 'collide':
+      /*
+       * From PIXELS, not from the tile path above. `lineCells` interpolates
+       * tiles, and a cell brush driven from it would paint the top-left cell of
+       * each tile the pointer crossed — a dotted diagonal instead of a stroke.
+       * Sampling the pointer directly is coarser between events and correct.
+       */
+      paintCollisionAt(px, py, drag.alt, drag.shift);
       break;
     case 'rect':
     case 'pick':
@@ -587,7 +920,11 @@ function setTool(tool: Tool): void {
   }
   // The plot layer is not a tile layer, so painting while it is active would
   // silently do nothing. Snap to a sensible layer instead of failing quietly.
-  if (tool !== 'plot' && tool !== 'object') {
+  // Only the tile tools need a tile layer to be active. The plot, object,
+  // animation and collision tools each own their own layer, so snapping the
+  // active layer for them would silently move the user off whatever they were
+  // painting on.
+  if (tool !== 'plot' && tool !== 'object' && tool !== 'anim' && tool !== 'collide') {
     if (activeTileLayer() === undefined) {
       const first = tileLayers(editor.doc)[0];
       if (first) editor.activeLayerId = first.id;
@@ -617,7 +954,7 @@ mapCanvas.addEventListener('pointerdown', (ev) => {
 
   const tile = screenToTile(editor.doc, editor.view, ev.offsetX, ev.offsetY);
   const pixel = screenToMapPixel(editor.view, ev.offsetX, ev.offsetY);
-  beginDrag(editor.tool, tile.x, tile.y, pixel.px, pixel.py, ev.altKey);
+  beginDrag(editor.tool, tile.x, tile.y, pixel.px, pixel.py, ev.altKey, ev.shiftKey);
 });
 
 mapCanvas.addEventListener('pointermove', (ev) => {
@@ -726,6 +1063,8 @@ const TOOL_KEYS: Readonly<Record<string, Tool>> = {
   e: 'erase',
   o: 'object',
   p: 'plot',
+  a: 'anim',
+  c: 'collide',
 };
 
 window.addEventListener('keydown', (ev) => {
@@ -812,6 +1151,10 @@ el<HTMLInputElement>('grid').addEventListener('change', (ev) => {
   editor.showGrid = (ev.target as HTMLInputElement).checked;
   requestDraw();
 });
+el<HTMLInputElement>('reserved').addEventListener('change', (ev) => {
+  editor.showReserved = (ev.target as HTMLInputElement).checked;
+  requestDraw();
+});
 el<HTMLInputElement>('dim').addEventListener('change', (ev) => {
   editor.dimInactive = (ev.target as HTMLInputElement).checked;
   requestDraw();
@@ -875,6 +1218,173 @@ el('resize').addEventListener('click', () => {
   refreshPanels();
   requestDraw();
   scheduleAutosave(editor.doc);
+});
+
+el<HTMLSelectElement>('anim-select').addEventListener('change', (ev) => {
+  // Switching what the brush stamps is not itself an edit, so no history batch
+  // — but the panel has to repaint to show the new frame strip.
+  animPanelHandlers.onSelect((ev.target as HTMLSelectElement).value);
+});
+
+/**
+ * A new animation, named up front.
+ *
+ * Asked for rather than defaulted because the id is DERIVED from the name and
+ * the id is the string every map file stores. Creating "New animation" and then
+ * typing the real name into the field leaves `new-animation` in the map forever
+ * — the name is cosmetic, the id is not, and only the first one you give gets
+ * to be free.
+ */
+el('anim-new').addEventListener('click', () => {
+  const name = window.prompt('Name the animation', 'Fountain');
+  if (name === null) return;
+  if (name.trim() === '') {
+    status('An animation needs a name — the id is derived from it.', 'err');
+    return;
+  }
+
+  const { library, id } = createAnimation(editor.animLibrary, allAnimIds(), name.trim());
+  editor.animId = id;
+  updateLibrary(library);
+  status(`New animation "${id}". Pick a tile in the palette and press Add frame.`, 'ok');
+});
+
+/**
+ * Duplicate, which is also how a built-in gets "edited".
+ *
+ * Built-ins live in TypeScript because they are derived from measured constants,
+ * so the editor must not write them. Copying one gives you the same frames in an
+ * entry you own — which is what somebody means when they say they want to change
+ * the water.
+ */
+el('anim-duplicate').addEventListener('click', () => {
+  const source = mergedAnimations().find((a) => a.id === editor.animId);
+  if (!source) return;
+  const { library, id } = duplicateAnimation(editor.animLibrary, source, allAnimIds());
+  editor.animId = id;
+  updateLibrary(library);
+  status(`Copied "${source.id}" to "${id}" — this one is editable.`, 'ok');
+});
+
+/**
+ * Delete, or reset — the same operation under two honest names.
+ *
+ * Removing an AUTHORED animation deletes it, and any cell stamped with its id is
+ * orphaned. Removing an **override** restores the built-in, because the merge
+ * falls back the moment the authored entry is gone: nothing is orphaned, nothing
+ * needs warning about, and the selection stays where it is because the id still
+ * resolves to something.
+ */
+el('anim-delete').addEventListener('click', () => {
+  const id = editor.animId;
+  if (!editor.animLibrary.some((a) => a.id === id)) return;
+
+  if (isBuiltinAnimationId(id)) {
+    if (!window.confirm(`Reset "${id}" to the built-in? Your changes to it are discarded.`)) return;
+    updateLibrary(deleteAnimation(editor.animLibrary, id));
+    status(`"${id}" is back to the built-in.`, 'ok');
+    return;
+  }
+
+  const layer = animLayer(editor.doc);
+  const stamped = layer?.cells.filter((c) => c.animId === id).length ?? 0;
+  const warning =
+    stamped > 0
+      ? `Delete "${id}"? ${stamped} cell(s) on this map stamp it and will draw nothing.`
+      : `Delete "${id}"?`;
+  if (!window.confirm(warning)) return;
+
+  const library = deleteAnimation(editor.animLibrary, id);
+  editor.animId = BUILTIN_GROUND_ANIMATIONS[0]?.id ?? library[0]?.id ?? '';
+  updateLibrary(library);
+  status(`Deleted "${id}".`, 'ok');
+});
+
+/**
+ * Appends whatever the palette has selected.
+ *
+ * **The palette IS the frame picker**, rather than this panel growing its own
+ * sheet browser. It already lists every sheet in the manifest and draws each one
+ * at a readable size, and a second picker would be a second thing to keep in
+ * step with `assets.ts`. It is also the reason frames can come from different
+ * sheets at all: switching the tileset dropdown between two "Add frame" clicks
+ * is the entire gesture.
+ *
+ * The TOP-LEFT of a marquee is taken, not the rectangle: a frame list is one
+ * frame per entry, and quietly appending twelve because somebody still had a
+ * fence stamp selected is worse than taking the corner they can see is
+ * highlighted.
+ */
+el('anim-add-frame').addEventListener('click', () => {
+  const selection = editor.paletteSelection;
+  if (!selection) {
+    status('Select a tile in the palette first — that is the frame to add.', 'err');
+    return;
+  }
+
+  const run = editor.palette.run;
+  const frame = selection.y * run.columns + selection.x;
+  if (frame >= run.tileCount) {
+    status('That palette cell is past the end of the sheet.', 'err');
+    return;
+  }
+
+  updateLibrary(addFrame(editableLibrary(), editor.animId, { sheet: run.key, frame }));
+  status(`Added ${run.key} frame ${frame}.`, 'ok');
+});
+
+el('anim-save').addEventListener('click', () => {
+  // Checked here as well as in the endpoint, because the two failures read
+  // differently: the endpoint refusing is "the tool is broken", the panel
+  // refusing names the animation and what is wrong with it.
+  const problems = libraryProblems(editor.animLibrary);
+  if (problems.length > 0) {
+    status(`Cannot save: ${problems.join('; ')}`, 'err');
+    return;
+  }
+
+  void saveGroundAnimations(editor.animLibrary).then((result) => {
+    status(result.message, result.ok ? 'ok' : 'err');
+    if (result.ok) editor.animDirty = false;
+  });
+});
+
+/**
+ * The library is not autosaved, so leaving with it dirty has to be announced.
+ *
+ * The map has `scheduleAutosave`; this deliberately does not, because a save
+ * here rewrites a file the GAME imports and Vite reloads on. Autosaving it
+ * would mean a half-built animation with no frames hot-reloading into the game
+ * every few seconds.
+ */
+window.addEventListener('beforeunload', (ev) => {
+  if (!editor.animDirty) return;
+  ev.preventDefault();
+  // Chrome ignores the string and shows its own text; assigning is still what
+  // triggers the prompt at all.
+  ev.returnValue = '';
+});
+
+el('clear-anims').addEventListener('click', () => {
+  const layer = animLayer(editor.doc);
+  if (!layer || layer.cells.length === 0) return;
+  if (!window.confirm(`Remove all ${layer.cells.length} animated cells?`)) return;
+  editor.history.begin('clear animations');
+  clearAnims(layer, editor.history);
+  editor.history.commit();
+  refreshPanels();
+  requestDraw();
+});
+
+el('clear-collision').addEventListener('click', () => {
+  const layer = collisionLayer(editor.doc);
+  if (!layer || layer.cells.length === 0) return;
+  if (!window.confirm(`Remove all ${layer.cells.length} painted collision cells?`)) return;
+  editor.history.begin('clear collision');
+  clearCollision(layer, editor.history);
+  editor.history.commit();
+  refreshPanels();
+  requestDraw();
 });
 
 el('clear-plots').addEventListener('click', () => {
@@ -944,9 +1454,43 @@ function selectDefaultPaletteTile(): void {
 }
 
 function updatePaletteHint(): void {
-  el('palette-hint').textContent = editor.palette.paintable
+  const base = editor.palette.paintable
     ? 'Click a tile, or drag to select a block as a multi-tile stamp.'
     : 'Frames are not one grid cell, so this sheet can only be placed with the Object tool.';
+
+  /*
+   * Say it in words as well as in dots. The sheet being four frames of the same
+   * art is not something you can see by looking at it — the blocks are subtly
+   * different, and the natural reading is "lots of similar tiles" rather than
+   * "one tile, four times".
+   */
+  const spec = animatedSheet(editor.palette.run.key);
+  if (spec) {
+    el('palette-hint').textContent =
+      `${base} This sheet animates: ${spec.frames} frames, ${spec.fps}fps. ` +
+      `Tiles with a dot move once painted — the rest are static art.`;
+    return;
+  }
+
+  /*
+   * The props sheet carries a constraint its art does not advertise.
+   *
+   * `decor` draws BELOW every world sprite, so a prop with height is drawn
+   * behind the player from every angle, permanently — which is why
+   * `GROUND_SCATTER` picked only flat tufts and pebbles. Someone adding flowers
+   * by hand has no way to know that, and the symptom (a flower the character
+   * walks in front of when they should be behind it) is subtle enough to live
+   * on a map for a long time.
+   */
+  if (editor.palette.run.key === GROUND_SCATTER.sheet) {
+    el('palette-hint').textContent =
+      `${base} Ticked props are the ones the farm already scatters — flat, safe on ` +
+      `the decor layer. Decor draws under every sprite, so anything with height ` +
+      `will sit behind the player forever.`;
+    return;
+  }
+
+  el('palette-hint').textContent = base;
 }
 
 paletteSelect.addEventListener('change', () => {
@@ -1007,14 +1551,49 @@ el('save-terrain').addEventListener('click', () => {
 // event at all.
 new ResizeObserver(() => resizeCanvas()).observe(mapCanvas);
 
-/** Prefer an existing farm.json so editing sessions are continuous; fall back to
- *  the autosave scratch buffer; otherwise start blank. */
+/**
+ * Load the map on disk, the autosave, or a blank document.
+ *
+ * **The autosave is offered when it DIFFERS from the file, rather than silently
+ * losing to it.** The old order was file-first, autosave only as a fallback,
+ * which is right whenever the file is the newer thing — and catastrophic in the
+ * one case where it is not. A script regenerated `farm.json` from config while
+ * an editor tab held hours of unsaved authoring; the tab still had the good map
+ * in memory, but any reload would have loaded the regenerated file *and then*
+ * overwritten the scratch buffer with it, taking the last copy with it. The work
+ * survived only because nobody pressed F5.
+ *
+ * So a differing scratch buffer now asks. It is one prompt, only when the two
+ * genuinely disagree, and the wrong answer is recoverable in a way that silently
+ * discarding somebody's afternoon is not.
+ */
 async function loadInitialDoc(): Promise<string> {
   const name = el<HTMLInputElement>('map-name').value.trim() || DEFAULT_MAP_NAME;
   try {
     const res = await fetch(`/tilemaps/${name}.json`, { cache: 'no-store' });
     if (res.ok) {
-      const { doc, warnings } = deserialize((await res.json()) as TiledMap);
+      const raw = (await res.json()) as TiledMap;
+      const { doc, warnings } = deserialize(raw);
+
+      /*
+       * Compared as serialised documents rather than by a timestamp: the two
+       * come from different clocks (a file mtime and a browser), and "which is
+       * newer" is exactly the question that was answered wrongly. "Do they
+       * differ at all" needs no clock.
+       */
+      const restored = loadAutosave();
+      if (restored && JSON.stringify(serialize(restored)) !== JSON.stringify(raw)) {
+        const keep = window.confirm(
+          `This browser has unsaved work that differs from ${name}.json on disk.\n\n` +
+            `OK — keep the unsaved work (then press Save to project to write it).\n` +
+            `Cancel — discard it and load ${name}.json.`,
+        );
+        if (keep) {
+          setDoc(restored);
+          return 'Restored unsaved work. Press Save to project to write it to disk.';
+        }
+      }
+
       setDoc(doc);
       return warnings.length > 0
         ? `Loaded ${name}.json with warnings: ${warnings.join(' ')}`

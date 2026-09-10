@@ -8,11 +8,14 @@ import { api, idempotencyKey } from './api.js';
  * state them would be a way to invent items (CLAUDE.md §4.1).
  */
 
-export interface InventorySlot {
-  readonly slotIndex: number;
-  readonly itemId: string;
-  readonly quantity: number;
-}
+/**
+ * Re-exported, not redeclared (T-18.26, §10). This shape was written out here
+ * and again in `apps/server/src/modules/inventory/service.ts`, while the
+ * declaration in `packages/shared` said `index` and had no importers at all —
+ * three copies, one of them wrong.
+ */
+export type { InventorySlot } from '@tillhaven/shared';
+import type { InventorySlot, SlotRef } from '@tillhaven/shared';
 
 export interface InventoryView {
   readonly slots: InventorySlot[];
@@ -20,11 +23,15 @@ export interface InventoryView {
   readonly capacity: number;
 }
 
-/** One end of a drag: which container, and which slot in it. */
-export interface SlotRef {
-  readonly container: 'inventory' | 'chest';
-  readonly slot: number;
-}
+/**
+ * One end of a drag: which container, and which slot in it.
+ *
+ * Re-exported from the SCHEMA (T-18.26), which is what the server actually
+ * parses the request against — so the client cannot describe a shape the
+ * endpoint would reject. It was a hand-written copy that happened to agree;
+ * `InventorySlot` beside it is what happens when one stops agreeing.
+ */
+export type { SlotRef } from '@tillhaven/shared';
 
 export interface MoveResult {
   readonly kind: 'moved' | 'merged' | 'swapped';

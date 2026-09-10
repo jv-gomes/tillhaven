@@ -16,7 +16,9 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "assets": "node scripts/prepare-assets.mjs",
-    "plots": "node scripts/generate-plot-layout.mjs",
+    "plots": "apps/mapmaker/node_modules/.bin/tsx apps/mapmaker/scripts/generate-plot-layout.ts",
+    "collision": "node scripts/generate-collision.mjs",
+    "layout": "apps/mapmaker/node_modules/.bin/tsx apps/mapmaker/scripts/generate-farm-layout.ts",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down"
   },

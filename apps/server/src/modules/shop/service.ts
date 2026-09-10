@@ -9,6 +9,8 @@ import {
   BUILDING_TIERS,
   benefitsFor,
   buildingCap,
+  levelForXp,
+  unlockLevelForSeed,
   type AnimalBuilding,
 } from '@tillhaven/shared';
 import { schema } from '../../db/client.js';
@@ -50,9 +52,27 @@ export interface ShopEntry {
   readonly category: string;
   readonly buyPrice: number | null;
   readonly sellPrice: number | null;
+  /**
+   * Farm level required to buy this, or `null` if nothing gates it (T-31.06).
+   *
+   * Sent so a locked row can say WHY it is locked. **It is not what enforces
+   * the lock** — `buy` re-derives it from the player's own experience (§4.1) —
+   * and it exposes nothing: crop unlock levels are public config the client
+   * already ships.
+   */
+  readonly unlockLevel: number | null;
 }
 
-/** The catalogue, for display. Derived from config, never from the database. */
+/**
+ * The catalogue, for display. Derived from config, never from the database.
+ *
+ * **Deliberately not filtered by the player's level.** A locked seed stays in
+ * the list with its requirement attached, because a shop that silently omits
+ * two thirds of its stock tells a new player the game has five crops. That is
+ * the same call T-18.14 made for a dead Buy button: an explained refusal beats
+ * an invisible one. It also keeps this function a pure read of config with no
+ * player argument, which is what lets `shopCatalogue()` stay cacheable.
+ */
 export function shopCatalogue(): ShopEntry[] {
   return ITEM_IDS.map((id) => {
     const item = ITEMS[id]!;
@@ -62,6 +82,7 @@ export function shopCatalogue(): ShopEntry[] {
       category: item.category,
       buyPrice: item.shopBuyPrice,
       sellPrice: item.shopSellPrice,
+      unlockLevel: unlockLevelForSeed(item.id),
     };
   }).filter((e) => e.buyPrice !== null || e.sellPrice !== null);
 }
@@ -115,6 +136,32 @@ export async function buy(
     throw new GameError(ErrorCode.ITEM_NOT_FOR_SALE, 'The shop does not sell that.', {
       itemId,
     });
+  }
+
+  /*
+   * The level gate (T-31.06). **Checked here, from the player's own
+   * experience** — never from anything the request carried, and never trusting
+   * that the client greyed the button out (§4.1).
+   *
+   * `levelForXp` rather than a stored level, for the reason `farm/level.ts`
+   * gives: the level is derived so the only way to raise it is to have earned
+   * the experience. That matters more here than it looks, because farm level
+   * also gates trading — a bug that let this read a client-supplied or
+   * writable level would be a bug in the anti-alt control too.
+   *
+   * Refused BEFORE the gold lock: there is no reason to take a row lock for a
+   * purchase that cannot happen.
+   */
+  const requiredLevel = unlockLevelForSeed(itemId);
+  if (requiredLevel !== null) {
+    const level = levelForXp(player.experience);
+    if (level < requiredLevel) {
+      throw new GameError(ErrorCode.SEED_LOCKED, 'Your farm is not ready for that seed yet.', {
+        itemId,
+        requiredLevel,
+        level,
+      });
+    }
   }
 
   // Integer arithmetic throughout — no floats for gold, ever (§10).

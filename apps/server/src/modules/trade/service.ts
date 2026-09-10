@@ -10,6 +10,7 @@ import type { Queryable, Tx } from '../../db/tx.js';
 import { parseAppearance, type AuthedPlayer } from '../../middleware/auth.js';
 import { assertBothCanTrade, assertCanTrade } from './eligibility.js';
 import { TradeStatus, effectiveStatus, expiresInMs, isLiveStatus } from './lifecycle.js';
+import type { TradeView } from '@tillhaven/shared';
 import { decodeOffer, encodeOffer, normaliseOffer, type OfferItem } from './offer.js';
 import {
   Container,
@@ -41,23 +42,15 @@ export interface TradeSide {
   readonly confirmed: boolean;
 }
 
-export interface TradeView {
-  readonly id: string;
-  readonly status: TradeStatus;
-  readonly initiatorId: string;
-  readonly recipientId: string;
-  readonly initiatorName: string;
-  readonly recipientName: string;
-  readonly revision: number;
-  readonly expiresInMs: number;
-  /** Whether the caller is the one who opened it. */
-  readonly isInitiator: boolean;
-  /** The caller's own side, and the other party's. */
-  readonly you: TradeSide;
-  readonly them: TradeSide;
-  /** Both sides confirmed at the current revision. Execution is T-4.05. */
-  readonly readyToExecute: boolean;
-}
+/**
+ * Re-exported, not redeclared (T-18.21).
+ *
+ * This interface was written out here AND in `apps/client/src/net/trade.ts`,
+ * and two hand-kept copies of a wire contract is how the client's `TradeStatus`
+ * came to disagree with the server's without anything failing. §10: defined
+ * once in `packages/shared`, imported by both sides.
+ */
+export type { TradeView };
 
 type TradeRow = typeof schema.trades.$inferSelect;
 
@@ -221,6 +214,8 @@ async function candidate(q: Queryable, playerId: string): Promise<AuthedPlayer |
       vipUntil: schema.players.vipUntil,
       flaggedAt: schema.players.flaggedAt,
       appearance: schema.players.appearance,
+      energySpent: schema.players.energySpent,
+      sleepingSince: schema.players.sleepingSince,
     })
     .from(schema.players)
     .where(eq(schema.players.id, playerId))

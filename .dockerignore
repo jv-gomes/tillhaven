@@ -1,0 +1,49 @@
+# What must never enter the image.
+#
+# The first two entries are not housekeeping — they are the licence and the
+# secrets. Everything else is build hygiene.
+
+# The licensed EmanuelleDev pack (ATTRIBUTION.md): redistribution is forbidden,
+# and an image pushed to a registry is redistribution. The API server has no use
+# for art in any case — Netlify serves the client.
+assets/
+apps/client/public/assets/
+
+# Secrets live in App Runner's configuration, never in a layer. A .env copied
+# into an image is readable by anyone who can pull it (CLAUDE.md §8).
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+
+.git
+.github
+.claude
+.vscode
+.idea
+
+# Nothing here is server code.
+#
+# The manifests are the exception: `pnpm install --frozen-lockfile` verifies the
+# lockfile against every workspace project it describes, so a missing
+# package.json makes the install fail rather than skip. Only the manifests come
+# in — none of the source.
+apps/mapmaker
+!apps/mapmaker/package.json
+apps/client/src
+apps/client/public
+apps/client/*.html
+docs
+ROADMAP.md
+README.md
+*.md
+!ATTRIBUTION.md
+
+coverage
+*.log
+.DS_Store

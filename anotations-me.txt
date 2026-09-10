@@ -1,0 +1,20 @@
+Vamos mudar algumas coisas, principalmente a utilização dos assets
+- Retirei o assets antigo que estava incompleto, deixei apenas o completo
+- Nesse MVP vai ter apenas 1 season, que é spring
+- Nesse MVP vai ter dia e noite apenas, sem chuva ou outra coisa
+- Para o chão, utilize o asset ["Tileset Grass Cliff Tileset Spring", "Tileset Grass Spring"]
+- Para a parte onde pode ser arado, tem que ser a parte mais alaranjada do ["Tileset Grass Spring"]
+- Quando ara, o asset muda para do arquivo ["Tilled Soil and wet soil"], utilize apenas o marrom, de um lado quando não está molhado, e do outro apenas quando está molhado
+- Em volta do mapa utilize ["Water Ground animations tiles","Water tile"] para deixar com agua
+- deixe o mapa ocupando a tela toda, logo aumente a quantidade de tiles, mas essa adição vai ser apenas agua, para uma melhor imersão
+- Como vai ter dia e noite, utilize o ["Clock"] para visualização
+- No MVP vai ter limitação de Energia, então utilize ["Bars"] para demonstrar a energia acabando
+- A ideia da energia é que aumente com o level, de 10 em 10 leveis aumenta um pouco
+- No inicio não consegue fazer muita coisa
+- O unico modo de recuperar a energia no MVP é apenas dormindo
+- O player pode deitar na cama para recuperar, 10 min na cama recupera tudo
+- Utilize as imagens do ["HUD"] para deixar bem mais imersivo 
+- Utilize apenas plantações do Spring
+- Para os assets de cada planta do spring utilize ["Crops/Spring"]
+- Para a semente que compra para plantar, ela está em ["All Crops"], onde parece que tem um saco de semente, logo pare de utilizar o assets da mochila
+

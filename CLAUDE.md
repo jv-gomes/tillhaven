@@ -238,12 +238,19 @@ it:
 
 ## 9. Assets
 
-All art comes from the **licensed pack in `new_assets/`** by **EmanuelleDev**
+All art comes from the **licensed pack in `assets/`** by **EmanuelleDev**
 (emanuelledev.itch.io): commercial use permitted, modification permitted,
 resale/redistribution forbidden, **credit mandatory** — the exact terms and
-the credit line live in `ATTRIBUTION.md`. The old `assets/` directory is
-unlicensed and gets deleted during the Phase 7 migration; never reference it
-in new code.
+the credit line live in `ATTRIBUTION.md`. It is **gitignored and must never be
+committed**; a fresh clone needs the pack copied in by hand before
+`pnpm assets` can run.
+
+**The path has changed twice, so be careful reading older notes.** In v1
+`assets/` was an unlicensed stand-in pack, deleted in Phase 7. Phase 7 put the
+licensed pack at `new_assets/`. It now lives at `assets/` again — the *same*
+licensed pack, under the old name. Anything in `docs/ROADMAP-v1.md` or in a
+Phase 7-29 write-up that says `new_assets/` means this directory; anything
+that says `assets/` and predates Phase 7 means the deleted stand-ins.
 
 Pack contents actually used by the MVP:
 - `Tileset/Tileset Grass Spring.png`, `Tilled Soil and wet soil.png`,
@@ -275,7 +282,7 @@ Pack contents actually used by the MVP:
   by magic string. (Exception: character layer strips are keyed by a naming
   convention because they load dynamically per appearance.)
 - Every art addition to the client goes through `scripts/prepare-assets.mjs`
-  (copies from `new_assets/` into `apps/client/public/assets/`).
+  (copies from `assets/` into `apps/client/public/assets/`).
 
 ---
 

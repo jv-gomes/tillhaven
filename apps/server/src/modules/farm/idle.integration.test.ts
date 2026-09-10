@@ -131,6 +131,37 @@ describe('PUT /api/farm/idle — validation', () => {
     expect(res.code).toBe('VALIDATION_FAILED');
   });
 
+  /**
+   * T-18.07 (BUG-09). This parsed cleanly for five phases and is the worst
+   * state the headline feature can be put in: the HUD says the farmer is
+   * working, the player is locked out of moving and using tools — `Farm.ts`
+   * gates input on `enabled` alone — and the simulator has no chores to do, so
+   * nothing ever happens. The player has traded their farm for nothing.
+   *
+   * Refused on the SERVER and not only in the panel, because §4.1 makes the
+   * panel a UX gate: a stale build, a replayed request or a curl would each put
+   * a real farm into a state the game has no way out of except the Stop button.
+   */
+  it('refuses to switch on with no chores at all', async () => {
+    const res = await client.put('/api/farm/idle', body({ enabled: true, tasks: [] }));
+
+    expect(res.code).toBe('VALIDATION_FAILED');
+    expect((await farmRow()).idleEnabled).toBe(false);
+  });
+
+  /**
+   * The other half of the same rule, and the reason it is a refinement rather
+   * than `tasks.nonempty()`: switching OFF with an empty list is ordinary.
+   * A farmer that is not working needs no chores.
+   */
+  it('accepts an empty chore list when idle is switched off', async () => {
+    const res = await client.put('/api/farm/idle', body({ enabled: false, tasks: [] }));
+
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(false);
+    expect(res.body.tasks).toEqual([]);
+  });
+
   it('refuses a body with no idempotency key', async () => {
     const res = await client.put('/api/farm/idle', { enabled: true, tasks: [] });
     expect(res.code).toBe('VALIDATION_FAILED');

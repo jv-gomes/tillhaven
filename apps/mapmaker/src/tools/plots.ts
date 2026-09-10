@@ -9,9 +9,63 @@
  * assumes.
  */
 
-import type { MapDoc, PlotLayer } from '../model/doc.js';
-import { inBounds } from '../model/doc.js';
+import { GROUND_FILL, toGid } from '@tillhaven/shared/config';
+import type { MapDoc, PlotLayer, TileLayer } from '../model/doc.js';
+import { GROUND_LAYER_ID, inBounds, indexOf } from '../model/doc.js';
 import type { History } from '../model/history.js';
+
+/**
+ * Marking a plot also paints the ground under it, and unmarking un-paints it.
+ *
+ * **Because a plantable area has to LOOK plantable.** The generator has always
+ * stamped `GROUND_FILL.tillable` over the field — the orange band that says
+ * "you can hoe here" without claiming anything about whether it has been hoed —
+ * and `farmMap.test.ts` pins that the paint and the plot markers match exactly.
+ * A plot marked in the editor and not painted would break that invariant the
+ * moment anybody saved, and the symptom in the game is a plot sitting on grass:
+ * a tile the player can farm with nothing to say so.
+ *
+ * The previous tile is remembered so removing a plot puts back what was there
+ * rather than assuming grass — a plot on a path should leave the path behind.
+ */
+function paintUnderPlot(
+  doc: MapDoc,
+  history: History,
+  x: number,
+  y: number,
+  tillable: boolean,
+): void {
+  const ground = doc.layers.find(
+    (l): l is TileLayer => l.kind === 'tile' && l.id === GROUND_LAYER_ID,
+  );
+  if (!ground) return;
+
+  const index = indexOf(doc, x, y);
+  if (tillable) {
+    const gid = toGid(GROUND_FILL.tillable.sheet, GROUND_FILL.tillable.frame);
+    // Remembered on the layer, not in the history entry: undo restores the tile
+    // through `history.setTile` anyway, and a side table would be a second
+    // source of truth for the same pixel.
+    UNDER_PLOT.set(`${x},${y}`, ground.data[index] ?? 0);
+    history.setTile(ground, index, gid);
+  } else {
+    const previous = UNDER_PLOT.get(`${x},${y}`);
+    if (previous !== undefined) {
+      history.setTile(ground, index, previous);
+      UNDER_PLOT.delete(`${x},${y}`);
+    }
+  }
+}
+
+/**
+ * What was under each plot before it was marked, so unmarking can put it back.
+ *
+ * Session-scoped, deliberately: a plot loaded from a saved map has no
+ * "before" — the map IS the before — so removing one leaves the tillable paint
+ * for the user to change with the ordinary paint tool. Guessing grass would be
+ * wrong wherever the field crosses a path.
+ */
+const UNDER_PLOT = new Map<string, number>();
 
 export function plotIndexAt(layer: PlotLayer, x: number, y: number): number {
   return layer.cells.findIndex((c) => c.x === x && c.y === y);
@@ -34,6 +88,7 @@ export function togglePlot(
 
   history.recordPlots(layer.id, before, after);
   layer.cells = after;
+  paintUnderPlot(doc, history, x, y, existing < 0);
   return existing >= 0 ? -1 : after.length - 1;
 }
 

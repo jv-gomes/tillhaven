@@ -1,4 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
+import { socketUrl } from './origin.js';
 
 /**
  * The trade push channel (T-4.10). One socket for the whole session, opened
@@ -15,9 +16,23 @@ let socket: Socket | null = null;
 
 function ensureConnected(): Socket {
   if (!socket) {
-    // Same origin as the REST API, so the session cookie rides along exactly
-    // as it does for `fetch` — no token to configure here (see net/api.ts).
-    socket = io({ withCredentials: true });
+    /*
+     * Same origin as the REST API, so the session cookie rides along exactly
+     * as it does for `fetch` — no token to configure here (see net/api.ts).
+     *
+     * That origin is no longer always this page's: the client is on Netlify and
+     * the API on AWS, so `socketUrl()` supplies the API's origin in production
+     * and `undefined` in dev, where `undefined` means "this page" and the Vite
+     * proxy handles it. `withCredentials` is what makes the browser attach the
+     * cookie to a cross-origin WebSocket handshake, and it was already here.
+     *
+     * **Netlify cannot proxy this.** Its redirects do not carry WebSocket
+     * upgrades, so pointing `/socket.io` at a Netlify rewrite would leave
+     * Socket.IO silently stuck in polling — the exact failure `vite.config.ts`
+     * documents from the dev proxy, which took a phase to notice because
+     * polling still works.
+     */
+    socket = io(socketUrl(), { withCredentials: true });
   }
   return socket;
 }

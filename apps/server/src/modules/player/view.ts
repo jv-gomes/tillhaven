@@ -1,5 +1,12 @@
-import { isVipActive, levelForXp, type PublicPlayer, type SelfPlayer } from '@tillhaven/shared';
-import { canTrade } from '../trade/eligibility.js';
+import {
+  isVipActive,
+  levelForXp,
+  levelProgress,
+  energyStateAt,
+  type PublicPlayer,
+  type SelfPlayer,
+} from '@tillhaven/shared';
+import { canTrade, tradeEligibility } from '../trade/eligibility.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
 
 /**
@@ -22,7 +29,18 @@ export function toSelfPlayer(player: AuthedPlayer, now: number): SelfPlayer {
     email: player.email,
     gold: player.gold,
     vipUntil: player.vipUntil,
-    canTrade: canTrade(player, now),
+    trade: tradeEligibility(player, now),
+    progress: levelProgress(player.experience),
+    /*
+     * Energy, settled on read (MVP re-scope). A sleeping player's bar
+     * therefore fills between polls without anything having run server-side —
+     * the same shape as crop growth and shipping payouts (§4.2).
+     */
+    energy: energyStateAt(
+      { energySpent: player.energySpent, sleepingSince: player.sleepingSince },
+      farmLevelOf(player),
+      now,
+    ),
     appearance: player.appearance,
   };
 }

@@ -1,11 +1,18 @@
 import {
   CROPS,
+  ITEMS,
+  ToolKind,
+  TREE_REGROW_MS,
+  WOOD_PER_TREE,
   getItem,
+  treeStateAt,
   IDLE_ACTION_MS,
   IDLE_MAX_CATCHUP_ACTIONS,
   IdleTask,
   WATER_DURATION_MS,
   type CropId,
+  EnergyAction,
+  energyCostOf,
 } from '@tillhaven/shared';
 import { growthAt, plantedCrop, settleGrowth } from './growth.js';
 import {
@@ -14,6 +21,9 @@ import {
   removeFromSlots,
   type SlotContents,
 } from '../inventory/service.js';
+
+/** What a tree drops. Matches `modules/farm/trees.ts` — one drop, one id. */
+const WOOD_ITEM_ID = 'wood';
 
 /**
  * The idle simulator (T-13.03a/b/c, CLAUDE.md §5.3).
@@ -72,6 +82,19 @@ export interface SimPlot {
  */
 export type SimItems = readonly SlotContents[];
 
+/**
+ * A tree, as the simulator needs it (T-20.06).
+ *
+ * Only `choppedAt` matters — whether it is standing is derived from that and
+ * the clock by `treeStateAt`, the same shared function the farm read and the
+ * chop intent use (§4.4). Storing "isStanding" here instead would be a fact
+ * that goes stale the moment virtual time moves.
+ */
+export interface SimTree {
+  readonly id: string;
+  readonly choppedAt: number | null;
+}
+
 export interface SimInput {
   /**
    * The farm's plots, in a STABLE order — the caller's order is the tie-break
@@ -80,6 +103,14 @@ export interface SimInput {
    * same order the farm-state read uses.
    */
   readonly plots: readonly SimPlot[];
+  /**
+   * The farm's trees, in a stable order, for `IdleTask.CHOP` (T-20.06).
+   *
+   * Optional so every existing caller and test keeps working unchanged: a
+   * farmer with no trees in the input simply never chops, which is also the
+   * honest answer for accounts that predate the T-20.01 migration.
+   */
+  readonly trees?: readonly SimTree[];
   readonly items: SimItems;
   /** Backpack slot count, from `capacityFor`. Harvests must fit inside it. */
   readonly capacity: number;
@@ -98,13 +129,35 @@ export interface SimInput {
   /** Overridable only so tests can use round numbers. Defaults to config. */
   readonly actionMs?: number;
   readonly maxActions?: number;
+  /**
+   * Energy available to the farmer for this window (MVP re-scope).
+   *
+   * **The simulator stops when it runs out**, and that is a deliberate choice
+   * rather than an oversight of the idle-first pillar. Energy that the offline
+   * farmer ignored would be no limit at all: turn idle mode on and the bar
+   * stops mattering forever. The consequence is real and worth stating — a
+   * player who leaves for a day comes back to a farm that stopped a few hours
+   * in, and has to sleep before it resumes.
+   *
+   * Optional, and `undefined` means UNLIMITED. Every existing test predates
+   * energy and describes what the simulator does with the farm rather than
+   * with the farmer, so they keep asserting exactly that.
+   */
+  readonly energy?: number;
 }
 
 export interface SimAction {
   /** Virtual time the action completed. */
   readonly at: number;
   readonly kind: IdleTask;
-  readonly plotId: string;
+  /**
+   * The plot worked. Present for every task except `chop`, which addresses a
+   * tree — see `treeId`. Optional rather than a union because the alternative
+   * ripples through every consumer of an action list to express one exception.
+   */
+  readonly plotId?: string;
+  /** The tree felled. Present only for `chop`. */
+  readonly treeId?: string;
   /**
    * The crop this action moved: sown for a plant, picked for a harvest;
    * absent for tilling and watering, which touch no crop in particular.
@@ -131,16 +184,41 @@ export interface SimAction {
  * only when a full bag was the thing standing in the way — a farmer that had
  * simply finished everything reports `nothing_to_do`.
  */
-export type SimStop = 'window_end' | 'nothing_to_do' | 'action_cap' | 'inventory_full';
+export type SimStop =
+  | 'window_end'
+  | 'nothing_to_do'
+  | 'action_cap'
+  | 'inventory_full'
+  | 'out_of_energy';
 
 export interface SimResult {
   readonly actions: readonly SimAction[];
   readonly plots: readonly SimPlot[];
+  /** The trees as they now stand. Empty when the caller passed none. */
+  readonly trees: readonly SimTree[];
   readonly items: SimItems;
   /** Virtual time actually reached. Never greater than `to`. */
   readonly processedTo: number;
   readonly stoppedReason: SimStop;
+  /** Energy the simulated actions consumed, for the applier to charge. */
+  readonly energySpent: number;
 }
+
+/**
+ * What each idle chore costs the farmer.
+ *
+ * A separate map rather than a field on `IdleTask` because the two vocabularies
+ * are genuinely different: `IdleTask` is what the player ticked on the idle
+ * panel, `EnergyAction` is what the game charges for, and collecting and
+ * feeding are charged without ever being idle chores.
+ */
+const IDLE_ENERGY_ACTION: Readonly<Record<IdleTask, EnergyAction>> = {
+  [IdleTask.TILL]: EnergyAction.TILL,
+  [IdleTask.PLANT]: EnergyAction.PLANT,
+  [IdleTask.WATER]: EnergyAction.WATER,
+  [IdleTask.HARVEST]: EnergyAction.HARVEST,
+  [IdleTask.CHOP]: EnergyAction.CHOP,
+};
 
 /**
  * Priority, descending time-criticality:
@@ -166,6 +244,15 @@ const PRIORITY: readonly IdleTask[] = [
   IdleTask.WATER,
   IdleTask.PLANT,
   IdleTask.TILL,
+  /*
+   * **Chopping is last, and that is the whole of its priority argument.** Every
+   * task above it is on a clock the player loses by missing — a ripe crop is
+   * blocking its plot, dry soil is growth not happening. A standing tree is
+   * losing nothing: it keeps until the field is dealt with, and its own 8h
+   * regrow is far slower than anything on the farm. Putting it anywhere higher
+   * would spend action slots on wood while a crop dried out.
+   */
+  IdleTask.CHOP,
 ];
 
 /** Empty means "no crop here", which is not the same as "nothing growing". */
@@ -237,8 +324,9 @@ function harvestInto(
 
 interface Chosen {
   readonly kind: IdleTask;
+  /** Index into `plots`, or into `trees` when `kind` is `chop`. */
   readonly index: number;
-  /** For a harvest: the bag it produces, already computed. */
+  /** For a harvest or a chop: the bag it produces, already computed. */
   readonly items?: SimItems;
 }
 
@@ -264,8 +352,44 @@ interface Chosen {
  * sequence, so if the constants ever move this is a decision rather than a
  * surprise.
  */
+/**
+ * Whether the farmer is carrying an axe.
+ *
+ * Matched on `ToolKind.AXE` rather than the id `'axe_wood'`, exactly as the
+ * chop intent does — D-4's eight tiers must work the day they are declared.
+ *
+ * **This is the simulator agreeing with the endpoint, not duplicating it.** A
+ * farmer told to chop with no axe must simply skip the task; simulating a chop
+ * the applier would then have to refuse would leave the two disagreeing about a
+ * payout, which is the one thing `SimItems` exists to prevent.
+ */
+function hasAxe(items: SimItems): boolean {
+  return items.some((slot) => ITEMS[slot.itemId]?.toolKind === ToolKind.AXE);
+}
+
+/**
+ * The bag after chopping, or null when the wood will not fit.
+ *
+ * Mirrors `harvestInto`: the simulator must not decide to chop a tree whose
+ * drop the applier's `addItem` would then refuse.
+ *
+ * **`addToSlots`, not `planAddToSlots`.** The first version used the latter and
+ * the difference is not cosmetic: `planAddToSlots` returns only the slots it
+ * TOUCHED, for a caller that is about to turn them into UPDATE statements,
+ * while this needs the whole bag. Using it here replaced the farmer's inventory
+ * with a single slot of wood — so the axe vanished on the first chop and every
+ * later one was skipped for having no axe. Caught by `works down every tree`,
+ * which is why that test exists rather than a single-chop one.
+ */
+function chopInto(items: SimItems, capacity: number): SimItems | null {
+  const wood = ITEMS[WOOD_ITEM_ID];
+  if (!wood) return null;
+  return addToSlots(items, WOOD_ITEM_ID, WOOD_PER_TREE, wood.stackLimit, capacity);
+}
+
 function chooseAction(
   plots: readonly SimPlot[],
+  trees: readonly SimTree[],
   items: SimItems,
   capacity: number,
   tasks: ReadonlySet<IdleTask>,
@@ -291,6 +415,24 @@ function chooseAction(
         if (after) return { chosen: { kind, index, items: after }, blockedByBag };
 
         if (growthAt(plot, at, durationPercent).isRipe && plot.unlocked) blockedByBag = true;
+      }
+      continue;
+    }
+
+    if (kind === IdleTask.CHOP) {
+      // No axe is not an error, the same way no seed is not an error: it is
+      // simply not the next thing this farmer can do.
+      if (!hasAxe(items)) continue;
+
+      for (const [index, tree] of trees.entries()) {
+        if (!treeStateAt(tree.choppedAt, at).isStanding) continue;
+
+        const after = chopInto(items, capacity);
+        if (after) return { chosen: { kind, index, items: after }, blockedByBag };
+
+        // A standing tree left unchopped because the bag is full is the same
+        // stop a ripe crop is, and deserves the same reportable reason.
+        blockedByBag = true;
       }
       continue;
     }
@@ -334,6 +476,7 @@ function chooseAction(
  */
 function nextOpportunity(
   plots: readonly SimPlot[],
+  trees: readonly SimTree[],
   at: number,
   tasks: ReadonlySet<IdleTask>,
   durationPercent: number,
@@ -370,6 +513,21 @@ function nextOpportunity(
     }
   }
 
+  /*
+   * A stump regrows at `choppedAt + TREE_REGROW_MS` (T-20.06) — the third thing
+   * time alone makes possible, and the reason `LOOKAHEAD_MS` had to grow.
+   *
+   * Offered only when chopping is actually on the roster: a farmer who was not
+   * told to chop must not sit waiting eight hours for a tree it will then
+   * ignore.
+   */
+  if (tasks.has(IdleTask.CHOP)) {
+    for (const tree of trees) {
+      if (tree.choppedAt === null) continue;
+      offer(tree.choppedAt + TREE_REGROW_MS);
+    }
+  }
+
   return soonest;
 }
 
@@ -386,6 +544,7 @@ export function simulate(input: SimInput): SimResult {
   const maxActions = input.maxActions ?? IDLE_MAX_CATCHUP_ACTIONS;
 
   const plots = input.plots.map((p) => ({ ...p }));
+  const trees = (input.trees ?? []).map((t) => ({ ...t }));
   let items: SimItems = [...input.items];
   const tasks = new Set(input.tasks);
   const actions: SimAction[] = [];
@@ -396,9 +555,11 @@ export function simulate(input: SimInput): SimResult {
     return {
       actions,
       plots,
+      trees,
       items,
       processedTo: input.from,
       stoppedReason: 'nothing_to_do',
+      energySpent: 0,
     };
   }
 
@@ -414,6 +575,13 @@ export function simulate(input: SimInput): SimResult {
   let slot = 1;
   let stoppedReason: SimStop = 'window_end';
   let clock = input.from;
+  /*
+   * `undefined` means unlimited — see `SimInput.energy`. Tracked as a
+   * remaining budget rather than a running total so the "can I afford the next
+   * action" test is one comparison.
+   */
+  let energyLeft = input.energy;
+  let energySpent = 0;
 
   for (;;) {
     if (actions.length >= maxActions) {
@@ -431,6 +599,7 @@ export function simulate(input: SimInput): SimResult {
 
     const { chosen, blockedByBag } = chooseAction(
       plots,
+      trees,
       items,
       input.capacity,
       tasks,
@@ -444,7 +613,7 @@ export function simulate(input: SimInput): SimResult {
        * make possible, so either a plot is about to dry out — jump to the first
        * slot at or after that moment — or the window is genuinely finished.
        */
-      const next = nextOpportunity(plots, at, tasks, durationPercent);
+      const next = nextOpportunity(plots, trees, at, tasks, durationPercent);
       if (next === null || next > input.to) {
         /*
          * A full bag is the one stop the player can act on, so it is reported
@@ -472,10 +641,37 @@ export function simulate(input: SimInput): SimResult {
       continue;
     }
 
-    const plotId = plots[chosen.index]!.id;
-    const touched = cropTouchedBy(plots[chosen.index]!, chosen.kind, input.cropId);
-    items = apply(plots, items, chosen, input.cropId, at);
-    actions.push({ at, kind: chosen.kind, plotId, ...(touched ? { cropId: touched } : {}) });
+    /*
+     * Chopping indexes `trees`, everything else indexes `plots` — so the id and
+     * the crop-touched question are both asked of whichever collection the
+     * action is about. Reading `plots[chosen.index]` unconditionally would name
+     * a random plot on every chop.
+     */
+    /*
+     * **Charged before the action is applied, and a shortfall ENDS the window
+     * rather than skipping to a cheaper task.** Skipping would let a tired
+     * farmer keep harvesting (1) while never tilling (2) again, which reads as
+     * the farm silently changing its mind about the standing orders. Stopping
+     * is legible: the farm worked until it was tired, and the summary says so.
+     */
+    const cost = energyCostOf(IDLE_ENERGY_ACTION[chosen.kind]);
+    if (energyLeft !== undefined && energyLeft < cost) {
+      stoppedReason = 'out_of_energy';
+      break;
+    }
+    if (energyLeft !== undefined) energyLeft -= cost;
+    energySpent += cost;
+
+    if (chosen.kind === IdleTask.CHOP) {
+      const treeId = trees[chosen.index]!.id;
+      items = apply(plots, trees, items, chosen, input.cropId, at);
+      actions.push({ at, kind: chosen.kind, treeId });
+    } else {
+      const plotId = plots[chosen.index]!.id;
+      const touched = cropTouchedBy(plots[chosen.index]!, chosen.kind, input.cropId);
+      items = apply(plots, trees, items, chosen, input.cropId, at);
+      actions.push({ at, kind: chosen.kind, plotId, ...(touched ? { cropId: touched } : {}) });
+    }
     clock = at;
     slot += 1;
   }
@@ -483,6 +679,7 @@ export function simulate(input: SimInput): SimResult {
   return {
     actions,
     plots,
+    trees,
     items,
     /*
      * A cap means the window is NOT fully accounted for, so the watermark
@@ -495,9 +692,19 @@ export function simulate(input: SimInput): SimResult {
      * clock adjustment can produce) settles nothing rather than handing the
      * applier a watermark that would move the farm into the past.
      */
+    /*
+     * `out_of_energy` settles like `action_cap`, not like `window_end`: the
+     * window is NOT accounted for, because the farmer would have kept working
+     * had they been able to. Settling the whole window would silently forgive
+     * the time and hand back a farm that had done nothing for hours with no
+     * record of why.
+     */
     processedTo:
-      stoppedReason === 'action_cap' ? clock : Math.max(input.from, input.to),
+      stoppedReason === 'action_cap' || stoppedReason === 'out_of_energy'
+        ? clock
+        : Math.max(input.from, input.to),
     stoppedReason,
+    energySpent,
   };
 }
 
@@ -508,16 +715,24 @@ export function simulate(input: SimInput): SimResult {
  * `to`, because a window that never ends is a loop that never ends. This one
  * is picked so it cannot hide anything an unbounded look would have found.
  *
- * Every event *time alone* can produce is inside one wet window.
- * `nextOpportunity` offers exactly two things — soil drying
- * `WATER_DURATION_MS` after it was wetted, and a crop ripening, and the latter
- * only when it lands before the former. No action is taken along the way (the
- * first one ends the search), so no plot's `wateredAt` moves and the whole set
- * of candidate instants is fixed at the start. Add one `IDLE_ACTION_MS` for
- * the slot the cadence rounds up to and the window provably contains the
- * answer.
+ * `nextOpportunity` offers exactly three things: soil drying
+ * `WATER_DURATION_MS` after it was wetted; a crop ripening, and only when it
+ * lands before the former; and — since T-20.06 — a stump regrowing
+ * `TREE_REGROW_MS` after it was felled. No action is taken along the way (the
+ * first one ends the search), so no plot's `wateredAt` and no tree's
+ * `choppedAt` moves, and the whole set of candidate instants is fixed at the
+ * start. Add one `IDLE_ACTION_MS` for the slot the cadence rounds up to and the
+ * window provably contains the answer.
+ *
+ * **`max`, not a sum, and not `WATER_DURATION_MS` any more.** This read
+ * `WATER_DURATION_MS + IDLE_ACTION_MS` and the comment above it justified that
+ * by enumerating the two events — which is exactly why adding a third had to
+ * change the number rather than sneak past it. `TREE_REGROW_MS` is 8h against
+ * watering's 4h, so a horizon of one wet window would have looked straight past
+ * every regrowing tree and reported "nothing to do" to a farmer whose only
+ * pending work was wood.
  */
-const LOOKAHEAD_MS = WATER_DURATION_MS + IDLE_ACTION_MS;
+const LOOKAHEAD_MS = Math.max(WATER_DURATION_MS, TREE_REGROW_MS) + IDLE_ACTION_MS;
 
 export interface NextActionInput extends Omit<SimInput, 'to' | 'maxActions'> {
   /**
@@ -586,11 +801,23 @@ function cropTouchedBy(
  */
 function apply(
   plots: SimPlot[],
+  trees: SimTree[],
   items: SimItems,
   chosen: Chosen,
   cropId: CropId | null,
   at: number,
 ): SimItems {
+  if (chosen.kind === IdleTask.CHOP) {
+    /*
+     * The same single write `chop()` makes: stamp `choppedAt` and take the bag
+     * `chooseAction` already found room in. Regrowth is never stored — it is
+     * derived from this instant by `treeStateAt`, here exactly as on the farm
+     * read (§4.2).
+     */
+    trees[chosen.index] = { ...trees[chosen.index]!, choppedAt: at };
+    return chosen.items ?? items;
+  }
+
   const plot = plots[chosen.index]!;
 
   if (chosen.kind === IdleTask.TILL) {

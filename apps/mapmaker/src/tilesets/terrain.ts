@@ -36,7 +36,17 @@
  * rewrite. `terrain-sets.json` is the committed calibration.
  */
 
-import { GROUND_GRASS, GROUND_SOIL_DRY, GROUND_SOIL_WET, GROUND_PATH, WATER_TILE } from '@tillhaven/shared/config';
+import {
+  GRASS_FILL_FRAME,
+  PATH_FILL_FRAME,
+  SOIL_DRY_FRAMES,
+  SOIL_WET_FRAMES,
+  TILESET_GRASS_SPRING,
+  TILESET_PATHS,
+  TILESET_SOIL,
+  TILLABLE_FILL_FRAME,
+  WATER_TILE,
+} from '@tillhaven/shared/config';
 import { runByKey } from '@tillhaven/shared/config';
 
 export const ROLES = [
@@ -65,6 +75,21 @@ export interface TerrainSet {
   readonly block: number;
   /** Role -> tile index within the block (0..15). */
   readonly roles: Partial<Record<Role, number>>;
+  /**
+   * An ABSOLUTE frame for a surface with no edge art at all. When set, every
+   * role resolves to it and `block`/`roles` are ignored.
+   *
+   * **Why this exists.** A block is 4x4 tiles, so `blockFrame` can only address
+   * columns 0-3 of a tileset. The pack's flat fills sit at column 9 of each
+   * 12-column terrain block — outside any block — and its wet-soil set is
+   * twelve columns right of the dry one, outside it again. Both are perfectly
+   * ordinary frames; they are simply not block-addressable.
+   *
+   * Before the re-scope every flat surface was its own 1x1 image, where local
+   * index 0 and absolute frame 0 were the same number and the distinction never
+   * came up. Now that these are windows into big shared sheets, it does.
+   */
+  readonly fillFrame?: number;
 }
 
 /** Rows per autotile block. Matches TILESET_SOURCE.blockRows in the manifest. */
@@ -157,6 +182,9 @@ export function blockFrame(set: TerrainSet, localIndex: number): number | undefi
  * usable; returning undefined would punch holes in the map.
  */
 export function frameForRole(set: TerrainSet, role: Role): number | undefined {
+  // A flat surface has one frame and no edges; every role is that frame.
+  if (set.fillFrame !== undefined) return set.fillFrame;
+
   const local = set.roles[role] ?? set.roles.c;
   if (local === undefined) return undefined;
   return blockFrame(set, local);
@@ -164,6 +192,8 @@ export function frameForRole(set: TerrainSet, role: Role): number | undefined {
 
 /** All frames a set owns, for "is this tile part of this terrain?" tests. */
 export function framesOf(set: TerrainSet): Set<number> {
+  if (set.fillFrame !== undefined) return new Set([set.fillFrame]);
+
   const frames = new Set<number>();
   for (const role of ROLES) {
     const local = set.roles[role];
@@ -198,51 +228,75 @@ export const SPRING_BLOCK_ROLES: Readonly<Record<Role, number>> = {
  * re-pointed at the new pack (T-7.07).
  */
 export const DEFAULT_TERRAIN_SETS: readonly TerrainSet[] = [
-  // New pack (T-7.05). `tileset-grass-spring.png`, `tileset-soil.png` and
-  // `tileset-paths.png` turned out to hold only self-contained rounded
-  // patches / framed rug pieces — never straight-edged art meant to connect
-  // with a same-type neighbour (verified by grid-overlay and
-  // connected-component inspection, see the T-7.05 write-up in
-  // ROADMAP.md). Forcing the 4x4 NW/N/NE/W/… layout above onto them would
-  // paint gaps at every seam. Instead, each of these is a flat colour
-  // sampled from the pack's own art (`scripts/draw-ground-tiles.py`) with
-  // only the `c` (fill) role calibrated — `frameForRole`'s existing
-  // fall-to-fill behaviour means every other role resolves to the SAME
-  // frame, which is exactly correct for a flat tile: there is no edge to
-  // draw. `water-tile.png` needs no synthesis; it already ships flat.
+  /*
+   * **Painted from the pack** (MVP re-scope). This block used to explain that
+   * `tileset-grass-spring.png`, `tileset-soil.png` and `tileset-paths.png`
+   * *"hold only self-contained rounded patches — never straight-edged art
+   * meant to connect with a same-type neighbour"*, and that the game therefore
+   * painted with flat colours it drew itself.
+   *
+   * That was measured on the incomplete pack. The complete one puts a flat,
+   * fully-opaque, single-colour fill at tile (9,2) of every 12-column terrain
+   * block, and ships a complete 4x4 wang set for tilled soil — see
+   * `docs/art-measurements.md` and `node scripts/measure-terrain.mjs`.
+   *
+   * Each set below still declares only the `c` (fill) role: the map paints
+   * flat ground and the EDGES are drawn at runtime by `plots.ts`, which knows
+   * which neighbours are tilled and picks a mask frame. `frameForRole`'s
+   * fall-to-fill behaviour resolves every other role to the same frame.
+   */
   {
     id: 'water',
     name: 'Water (flat)',
     tilesetKey: WATER_TILE.key,
     block: 0,
-    roles: { c: 0 },
+    roles: {},
+    fillFrame: 0,
   },
   {
     id: 'ground-grass',
-    name: 'Grass (flat fill)',
-    tilesetKey: GROUND_GRASS.key,
+    name: 'Grass',
+    tilesetKey: TILESET_GRASS_SPRING.key,
     block: 0,
-    roles: { c: 0 },
+    roles: {},
+    fillFrame: GRASS_FILL_FRAME,
+  },
+  {
+    /*
+     * The tillable field, before a hoe touches it — the orange band of the
+     * grass tileset. New in the re-scope: a plot used to be grass until it was
+     * tilled, so nothing on screen said where the field was.
+     */
+    id: 'ground-tillable',
+    name: 'Tillable field (orange)',
+    tilesetKey: TILESET_GRASS_SPRING.key,
+    block: 0,
+    roles: {},
+    fillFrame: TILLABLE_FILL_FRAME,
   },
   {
     id: 'ground-soil-dry',
-    name: 'Tilled soil, dry (flat fill)',
-    tilesetKey: GROUND_SOIL_DRY.key,
+    name: 'Tilled soil, dry',
+    tilesetKey: TILESET_SOIL.key,
+    // Mask 15 — the fully-surrounded centre of a tilled patch.
     block: 0,
-    roles: { c: 0 },
+    roles: {},
+    fillFrame: SOIL_DRY_FRAMES[15]!,
   },
   {
     id: 'ground-soil-wet',
-    name: 'Tilled soil, wet (flat fill)',
-    tilesetKey: GROUND_SOIL_WET.key,
+    name: 'Tilled soil, wet',
+    tilesetKey: TILESET_SOIL.key,
     block: 0,
-    roles: { c: 0 },
+    roles: {},
+    fillFrame: SOIL_WET_FRAMES[15]!,
   },
   {
     id: 'ground-path',
-    name: 'Path (flat fill)',
-    tilesetKey: GROUND_PATH.key,
+    name: 'Path',
+    tilesetKey: TILESET_PATHS.key,
     block: 0,
-    roles: { c: 0 },
+    roles: {},
+    fillFrame: PATH_FILL_FRAME,
   },
 ];

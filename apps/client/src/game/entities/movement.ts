@@ -1,3 +1,5 @@
+import { CHAR_ART, CHAR_FRAME, CHAR_ORIGIN } from '@tillhaven/shared/config';
+
 /**
  * The player's movement maths, with no Phaser in it.
  *
@@ -67,6 +69,61 @@ export interface Bounds {
   readonly maxY: number;
 }
 
+/** Is this tile solid? Supplied by the scene's `BlockMap` (T-15.07). */
+export type Blocked = (tileX: number, tileY: number) => boolean;
+
+/**
+ * The player's collision box, in pixels around their FEET.
+ *
+ * Mirrors `PLAYER_COLLIDER` in shared config; passed in rather than imported so
+ * this module stays free of everything but arithmetic, which is what makes it
+ * testable without a canvas, a clock or a manifest.
+ */
+export interface Collider {
+  readonly halfWidth: number;
+  readonly height: number;
+}
+
+/**
+ * What the player can bump into.
+ *
+ * Optional everywhere it is used: `step()` without a `world` behaves exactly as
+ * it did before T-15.06, which is what let all of this module's existing tests
+ * carry on unmodified, and what the idle replay falls back to when it gets
+ * stuck (T-15.09).
+ */
+export interface World {
+  readonly blocked: Blocked;
+  readonly collider: Collider;
+  /** Tile size in world pixels. */
+  readonly tileSize: number;
+}
+
+/**
+ * True when the collider, placed with its feet at (x, y), overlaps a solid tile.
+ *
+ * The tile range is computed by rounding OUTWARDS from the box's edges with an
+ * exclusive right/bottom — the same convention `footprintOf` uses in
+ * `buildings.ts`. Getting this off by one is the classic source of "I can stand
+ * half inside the wall": using an inclusive right edge would test one tile too
+ * many and stop the player a pixel short of every surface.
+ */
+function overlapsBlocked(x: number, y: number, world: World): boolean {
+  const { collider, tileSize, blocked } = world;
+
+  const x0 = Math.floor((x - collider.halfWidth) / tileSize);
+  const x1 = Math.ceil((x + collider.halfWidth) / tileSize) - 1;
+  const y0 = Math.floor((y - collider.height) / tileSize);
+  const y1 = Math.ceil(y / tileSize) - 1;
+
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      if (blocked(tx, ty)) return true;
+    }
+  }
+  return false;
+}
+
 export interface MoveState {
   /** Feet position, world pixels. */
   readonly x: number;
@@ -93,12 +150,16 @@ export interface MoveState {
  * `speed` argument (T-8.04 removed it): nothing ever passed one, and keeping
  * both would leave two answers to "how fast is this character" with no rule
  * about which wins.
+ *
+ * `world` is optional (T-15.06). Without it the character is stopped only by
+ * the map's edges, exactly as before; with it, solid tiles stop it too.
  */
 export function step(
   state: MoveState,
   input: MoveInput,
   deltaMs: number,
   bounds: Bounds,
+  world?: World,
 ): MoveState {
   // Opposing keys cancel, so holding left+right stands still rather than
   // picking whichever was polled last.
@@ -116,15 +177,102 @@ export function step(
   const scale = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;
   const distance = speed * (clampDelta(deltaMs) / 1000) * scale;
 
+  const wantX = clamp(state.x + dx * distance, bounds.minX, bounds.maxX);
+  const wantY = clamp(state.y + dy * distance, bounds.minY, bounds.maxY);
+
+  const { x, y } = world
+    ? resolve(state, wantX, wantY, world)
+    : { x: wantX, y: wantY };
+
   return {
-    x: clamp(state.x + dx * distance, bounds.minX, bounds.maxX),
-    y: clamp(state.y + dy * distance, bounds.minY, bounds.maxY),
+    x,
+    y,
     // Horizontal wins a tie: a diagonal walk reads better from the side than
     // from behind.
+    //
+    // Deliberately taken from the INPUT, not from the distance actually
+    // travelled: a player walking into a wall should keep facing the wall, so
+    // the faced-tile action still targets it. Deriving facing from movement
+    // would make the character look away from whatever it is standing against.
     facing: dx !== 0 ? (dx > 0 ? 'right' : 'left') : dy < 0 ? 'up' : 'down',
     moving: true,
     running: input.run,
   };
+}
+
+/**
+ * Slide the move along whichever axes are free.
+ *
+ * **Per-axis, and the order matters.** X is resolved first against the OLD y;
+ * Y is then resolved against the ALREADY-RESOLVED x. That asymmetry is the
+ * whole trick: walking diagonally into a wall, one axis is refused and the
+ * other still moves, so the character slides along the surface instead of
+ * stopping dead. Testing the combined destination in one go — or testing both
+ * axes against the original position — makes the character stick to every wall
+ * it touches at an angle, which feels broken in a way players describe as "the
+ * controls are bad".
+ *
+ * If the collider is ALREADY inside a solid tile, collision is skipped for this
+ * frame and the move is allowed. Otherwise a player who ends up inside a wall
+ * is stuck forever, and there is a real way to get there: buy a Deluxe barn
+ * while standing where its wall is about to appear. Letting them walk out is
+ * self-healing; trapping them needs a support ticket.
+ */
+function resolve(
+  state: MoveState,
+  wantX: number,
+  wantY: number,
+  world: World,
+): { x: number; y: number } {
+  if (overlapsBlocked(state.x, state.y, world)) return { x: wantX, y: wantY };
+
+  const { halfWidth, height } = world.collider;
+
+  const x = slide(state.x, wantX, halfWidth, -halfWidth, world.tileSize, (v) =>
+    overlapsBlocked(v, state.y, world),
+  );
+  const y = slide(state.y, wantY, 0, -height, world.tileSize, (v) =>
+    overlapsBlocked(x, v, world),
+  );
+
+  return { x, y };
+}
+
+/**
+ * Move along one axis as far as the blockers allow, stopping flush against them.
+ *
+ * Refusing the whole step when the destination is blocked is not good enough: a
+ * frame covers up to 8.4px, so the character would halt up to 8px short of
+ * every wall and — worse — could never close that gap, because every subsequent
+ * frame proposes the same blocked destination. It reads as an invisible wall
+ * standing off the real one.
+ *
+ * So when the destination is blocked, snap the LEADING EDGE of the collider to
+ * the tile boundary it ran into. `leadPos`/`leadNeg` are the offsets from the
+ * position to that edge in each direction — for X they are ±halfWidth; for Y
+ * they are 0 going down (the feet are the bottom edge) and -height going up.
+ * The snap is accepted only if it is genuinely free and genuinely forward, so a
+ * bad case degrades to "did not move" rather than to a teleport.
+ */
+function slide(
+  from: number,
+  want: number,
+  leadPos: number,
+  leadNeg: number,
+  tileSize: number,
+  overlaps: (value: number) => boolean,
+): number {
+  if (want === from) return from;
+  if (!overlaps(want)) return want;
+
+  const forward = want > from;
+  const lead = forward ? leadPos : leadNeg;
+  const edge = want + lead;
+  const snapped =
+    (forward ? Math.floor(edge / tileSize) : Math.ceil(edge / tileSize)) * tileSize - lead;
+
+  const progressed = forward ? snapped > from && snapped <= want : snapped < from && snapped >= want;
+  return progressed && !overlaps(snapped) ? snapped : from;
 }
 
 /** Guards against a NaN or negative delta as well as a huge one. */
@@ -135,4 +283,39 @@ function clampDelta(deltaMs: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
+}
+
+/* ------------------------------------------------------------------ *
+ * Map bounds
+ * ------------------------------------------------------------------ */
+
+/** Where origin x = 0.5 puts the sprite's centre column within the frame. */
+const CHAR_FRAME_CENTRE = CHAR_FRAME.width * CHAR_ORIGIN.x;
+
+/**
+ * Where the player's feet may be, so no drawn pixel leaves the map.
+ *
+ * Derived from `CHAR_ART`, the measured locomotion silhouette (T-8.03) — not
+ * from the frame, which carries blank padding on every side. Clamping by the
+ * frame would stop the character a visible tile short of the map edge.
+ *
+ * **Lives here rather than in `Player.ts` (moved in T-15.09).** It is pure
+ * arithmetic over measured constants with no Phaser in it, which is this
+ * module's whole remit — and `Player.ts` imports Phaser, so anything that
+ * wanted these bounds in a test had to boot a browser environment to get them.
+ * `reachability.test.ts` is exactly that caller.
+ */
+export function playerBounds(mapWidth: number, mapHeight: number): Bounds {
+  // With origin (0.5, CHAR_ORIGIN.y) the art spans these many pixels either
+  // side of, and above, the feet position.
+  const left = CHAR_FRAME_CENTRE - CHAR_ART.left;
+  const right = CHAR_ART.right - CHAR_FRAME_CENTRE;
+  const above = CHAR_ART.bottom - CHAR_ART.top;
+
+  return {
+    minX: left,
+    maxX: Math.max(left, mapWidth - right),
+    minY: above,
+    maxY: Math.max(above, mapHeight),
+  };
 }

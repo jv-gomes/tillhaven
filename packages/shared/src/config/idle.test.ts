@@ -17,8 +17,18 @@ import { HOUR, MINUTE, SECOND } from './time.js';
  * two properties of the time model that a wrong number would break silently.
  */
 describe('idle task types', () => {
-  it('is exactly the four verbs of the farming loop, in dependency order', () => {
-    expect(IDLE_TASK_TYPES).toEqual(['till', 'plant', 'water', 'harvest']);
+  it('is the four verbs of the farming loop in dependency order, then chop', () => {
+    expect(IDLE_TASK_TYPES).toEqual(['till', 'plant', 'water', 'harvest', 'chop']);
+  });
+
+  /**
+   * Chopping is appended, not interleaved (T-20.06). The first four are ordered
+   * by dependency — you cannot plant ground you have not tilled — and chop
+   * depends on none of them, so it goes last rather than somewhere that would
+   * imply a relationship it does not have.
+   */
+  it('keeps chop outside the farming loop‘s dependency chain', () => {
+    expect(IDLE_TASK_TYPES.indexOf(IdleTask.CHOP)).toBe(IDLE_TASK_TYPES.length - 1);
   });
 
   it('lists every member of IdleTask exactly once', () => {
@@ -33,7 +43,9 @@ describe('idle task types', () => {
   it('accepts only the listed tasks', () => {
     for (const task of IDLE_TASK_TYPES) expect(isIdleTask(task)).toBe(true);
 
-    for (const bogus of ['chop', 'mine', 'TILL', '', 'till ', 'sell']) {
+    // `'chop'` was in this list until T-20.06 made it real — which is the
+    // point of the list: a guard that says yes to anything looks like a guard.
+    for (const bogus of ['mine', 'fish', 'TILL', '', 'till ', 'sell']) {
       expect(isIdleTask(bogus), bogus).toBe(false);
     }
   });
@@ -108,5 +120,47 @@ describe('idle crop selection', () => {
   it('has a non-empty set of crops to choose from', () => {
     expect(CROP_IDS.length).toBeGreaterThan(0);
     for (const id of CROP_IDS) expect(CROPS[id]).toBeDefined();
+  });
+});
+
+/**
+ * T-34.08. **Fishing is hands-on, and the code says so.**
+ *
+ * This is a decision recorded as a test rather than as a comment, deliberately.
+ * Adding `FISH: 'fish'` to `IdleTask` is a one-line change that reads like
+ * somebody fixing an obvious omission — the list already contains chopping, and
+ * fishing looks like the same shape of thing. It is not, and the difference is
+ * the whole reason the gameplay overhaul exists: idle mode runs the farm LOOP,
+ * and active play gets the verbs that reward attention.
+ *
+ * A future session that wants an idle fisher has to delete this test, which is
+ * the moment they have to reopen the decision.
+ */
+describe('fishing is not an idle task', () => {
+  it('has no IdleTask entry', () => {
+    expect(
+      IDLE_TASK_TYPES,
+      'fishing became an idle task. The bite is drawn per cast and the reel is ' +
+        'judged against a two-second window, so an idle farmer either misses ' +
+        'every cast (pointless) or lands every one (the minigame deleted, and ' +
+        'the best income in the game handed to the tab nobody is watching). ' +
+        'If this is genuinely wanted, reopen it in ROADMAP.md rather than here.',
+    ).not.toContain('fish');
+  });
+
+  it('is not reachable through isIdleTask either', () => {
+    // The type guard is what a payload is validated against, so a task the
+    // enum does not hold must not sneak in through a string.
+    expect(isIdleTask('fish')).toBe(false);
+    expect(isIdleTask('cast')).toBe(false);
+  });
+
+  /**
+   * The positive half: every task that IS in the list is one the simulator can
+   * actually perform. A guard that only says what is absent would pass just as
+   * well on an empty list.
+   */
+  it('still holds the five tasks the simulator runs', () => {
+    expect([...IDLE_TASK_TYPES].sort()).toEqual(['chop', 'harvest', 'plant', 'till', 'water']);
   });
 });

@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { CROPS, CROP_IDS, WATER_DURATION_MS, WATERING_ENABLED, cropForSeed } from './crops.js';
+// Phase U: the bundled-font credit check reads the fonts directory on disk,
+// because the directory is what actually ships and a list would drift from it.
+import { readdirSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  CROPS,
+  CROP_IDS,
+  MIN_CROP_UNLOCK_LEVEL,
+  WATER_DURATION_MS,
+  WATERING_ENABLED,
+  cropForSeed,
+  unlockLevelForSeed,
+} from './crops.js';
 import {
   ANIMALS,
   ANIMAL_BUILDINGS,
@@ -11,7 +24,11 @@ import {
   buildingCap,
   nextBuildingCost,
 } from './animals.js';
-import { ITEMS, ITEM_IDS, ItemCategory, getItem } from './items.js';
+import { ITEMS, ITEM_IDS, ItemCategory, ToolKind, getItem } from './items.js';
+import { TREE_REGROW_MS, WOOD_PER_TREE } from './trees.js';
+import { TREES } from './farmLayout.js';
+import { HOUR } from './time.js';
+import { CropId } from './crops.js';
 import {
   plotUnlockCost,
   STARTING_PLOTS,
@@ -23,11 +40,12 @@ import {
   STARTING_ITEMS,
   TRADE_MIN_FARM_LEVEL,
 } from './economy.js';
-import { FARM_LEVEL_XP, MAX_FARM_LEVEL, xpForHarvest } from './level.js';
+import { FARM_LEVEL_XP, MAX_FARM_LEVEL, XP_PER_UNIT_MS, xpForCollect, xpForHarvest } from './level.js';
 import { VIP_BENEFITS, FREE_BENEFITS, applyDurationPercent, benefitsFor, isVipActive } from './vip.js';
 import { CREDITS } from './credits.js';
 import {
   SHEETS,
+  ICON_SHEETS,
   IMAGES,
   ASSET_BASE,
   CHAR_PROMO_IDLE,
@@ -58,6 +76,7 @@ import {
   UI_SLOT,
   charAnimDurationMs,
   charToolPath,
+  ICON_ALL_CROPS,
 } from './assets.js';
 
 /**
@@ -279,6 +298,61 @@ describe('asset manifest', () => {
     }
   });
 
+  /**
+   * T-16.02. Every one-shot animation also LOCKS MOVEMENT for its own length,
+   * so its duration is a gameplay number and not only a visual one.
+   *
+   * The floor exists because the new strips are much shorter than the two that
+   * came before: `pet` is 3 frames against watering's 8. At the 10 fps the tool
+   * anims use it would last 300ms, which is close enough to a single frame of
+   * hesitation that the action reads as not having happened — so `pet` runs at
+   * 6. This pins the property (nothing under 400ms) rather than the fps, so
+   * retuning a rate is free but making an action imperceptible is not.
+   *
+   * The ceiling matters for the opposite reason: the lock refuses movement, and
+   * a swing much longer than a second feels like the game stopped responding.
+   */
+  it('every one-shot action is long enough to read and short enough to bear', () => {
+    const oneShot = Object.values(CHAR_ANIMS).filter((a) => !a.loop);
+    expect(oneShot.length, 'no one-shot anims — this would pass vacuously').toBeGreaterThan(0);
+
+    for (const anim of oneShot) {
+      const ms = charAnimDurationMs(anim);
+      expect(ms, `${anim.key} is too brief to read`).toBeGreaterThanOrEqual(400);
+      expect(ms, `${anim.key} locks movement too long`).toBeLessThanOrEqual(1200);
+    }
+  });
+
+  /**
+   * T-16.02, and the one call here a reviewer would otherwise try to "fix".
+   *
+   * `plant`'s source folder (`6. Shovel`) really does ship a
+   * `Weapons/Shovel/1.png` at exactly the geometry `TOOL_ANIMS` requires, so
+   * adding it would work and look deliberate. It must not be added: there is no
+   * shovel ITEM, tools in this game are things you own and equip (§5.2), and
+   * the hand holding a seed packet would grow an implement that is in nobody's
+   * backpack. `harvest` and `pet` have no weapon folder at all, so `plant` is
+   * the only one this is ever tempting for — which is why it is pinned.
+   *
+   * T-20.04 added a second instance of exactly this: `axe`'s source folder is
+   * `5. Axe and Sickle` and ships `Weapons/Sickle/1.png` at matching geometry.
+   * The axe overlay is used and the sickle is not, for the same reason — there
+   * is no sickle item.
+   */
+  it('only the real tools draw an implement', () => {
+    // Three since T-20.04. The axe belongs here where the shovel does not,
+    // and the difference is the whole rule: `axe_wood` is an item a player
+    // owns and equips, so drawing it is drawing what they are holding.
+    expect([...TOOL_ANIMS].sort()).toEqual(['axe', 'hoe', 'watering']);
+    for (const anim of ['plant', 'harvest', 'pet'] as const) {
+      expect(CHAR_ANIMS[anim], `${anim} is a real animation`).toBeDefined();
+      expect(
+        (TOOL_ANIMS as readonly string[]).includes(anim),
+        `${anim} must stay bare-handed`,
+      ).toBe(false);
+    }
+  });
+
   it('character layers are stacked skin, clothes, eyes, hair', () => {
     expect(CHAR_LAYER_ORDER).toEqual(['skin', 'clothes', 'eyes', 'hair']);
   });
@@ -375,26 +449,125 @@ describe('crops', () => {
   });
 
   /**
-   * The old pack gave potato a seventh stage; the new pack (measured in
-   * T-7.08, see `assets.ts`'s crop-section comment) does not — all four crop
-   * strips share the identical 6-growth-stage/blank/produce layout. Pinning
-   * the count here means a config edit that grows one crop's stage list
-   * without re-measuring its sheet fails in one obvious place rather than as
-   * a missing frame at runtime.
+   * **"Exactly six growth stages" was true of four crops and is false of
+   * twenty** (T-31.04). T-7.08 measured the original four and found an
+   * identical 6-stage/blank/produce layout; T-31.01 measured all thirty sheets
+   * in the pack and found the stage count runs from **five to eight** across
+   * the ones this game uses, and the produce frame is 7 on an 8-frame sheet
+   * and 9 on a 10-frame one. `stageFrames` was an explicit list rather than a
+   * computed range precisely so this would cost nothing (`crops.ts`), and it
+   * did.
+   *
+   * So the invariant is re-stated as the SHAPE the measurement found, which is
+   * what a config edit can still get wrong:
+   *
+   *   - the growth run starts at frame 0 and is contiguous — a crop whose
+   *     stages skip a frame would freeze mid-growth on screen;
+   *   - the produce icon is the LAST frame of the sheet, which held for all
+   *     twenty (`produceFrame === cols * rows - 1`);
+   *   - the produce frame is after every growth stage, so a ripe crop can
+   *     never be drawn with a sprout;
+   *   - `seedFrame` is the first growth stage, which is what "just planted"
+   *     means.
+   *
+   * Stated against `sheet.cols` rather than against literals, so it is checked
+   * per crop rather than asserting one crop's numbers onto all of them.
    */
-  it('every crop has exactly six growth stages', () => {
+  it('every crop has a contiguous growth run starting at frame 0', () => {
     for (const id of CROP_IDS) {
-      expect(CROPS[id].stageFrames, id).toHaveLength(6);
+      const { stageFrames } = CROPS[id];
+      expect(stageFrames[0], `${id} does not start at frame 0`).toBe(0);
+      for (const [i, frame] of stageFrames.entries()) {
+        expect(frame, `${id} stage ${i} is not contiguous`).toBe(i);
+      }
     }
   });
 
-  it('every crop shares the measured T-7.08 frame layout', () => {
+  it('every crop has between five and eight growth stages, as measured', () => {
+    for (const id of CROP_IDS) {
+      const n = CROPS[id].stageFrames.length;
+      expect(n, `${id} has ${n} stages`).toBeGreaterThanOrEqual(5);
+      expect(n, `${id} has ${n} stages`).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('every crop takes its produce icon from the last frame of its own sheet', () => {
     for (const id of CROP_IDS) {
       const crop = CROPS[id];
-      expect(crop.stageFrames, id).toEqual([0, 1, 2, 3, 4, 5]);
-      expect(crop.seedFrame, id).toBe(0);
-      expect(crop.produceFrame, id).toBe(7);
+      const last = crop.sheet.cols * crop.sheet.rows - 1;
+
+      expect(crop.produceFrame, `${id} produce frame`).toBe(last);
+      expect(
+        crop.produceFrame,
+        `${id} would draw a ripe crop as a growth stage`,
+      ).toBeGreaterThan(crop.stageFrames[crop.stageFrames.length - 1]!);
+      expect(crop.seedFrame, `${id} seed frame`).toBe(crop.stageFrames[0]);
     }
+  });
+
+  /**
+   * T-16.01. The seed PACKET must never be the crop's own art.
+   *
+   * Until T-16.01 `items.ts` built a seed's icon from `CROPS[crop].seedFrame`,
+   * which is the same number as `stageFrames[0]` — so the bag in the hotbar and
+   * the sprout in the soil were the identical 16x16 frame of the identical
+   * sheet. The bug was invisible in every unit test because both numbers were
+   * individually correct; only the SHARING was wrong.
+   *
+   * So this asserts the separation directly rather than asserting a frame
+   * number: a seed item's icon sheet must not be any crop sheet. That survives
+   * someone re-picking the bag colours, and fails the moment anyone points a
+   * seed back at its crop.
+   */
+  it('no seed item is iconed with a crop sheet', () => {
+    const cropSheets = new Set(CROP_IDS.map((id) => CROPS[id].sheet.key));
+
+    const seeds = ITEM_IDS.filter((id) => ITEMS[id]!.category === ItemCategory.SEED);
+    expect(seeds.length, 'no seed items found — this test would vacuously pass').toBe(
+      CROP_IDS.length,
+    );
+
+    for (const id of seeds) {
+      const item = ITEMS[id]!;
+      expect(
+        cropSheets.has(item.icon.sheet),
+        `${item.name} is iconed with crop sheet "${item.icon.sheet}" — a seed packet must not be its own growth stage`,
+      ).toBe(false);
+      expect(item.icon.sheet, item.name).toBe(ICON_ALL_CROPS.key);
+    }
+  });
+
+  /**
+   * **Every crop takes a distinct seed bag again.**
+   *
+   * This rule was true, then had to be weakened, and is now true again. It
+   * held while `ICON_SEED_BAGS` (`Bags.png`, seven sacks) covered four crops.
+   * At twenty crops it could not, and T-31.04 replaced it with "no bag carries
+   * more than `ceil(crops / bags)`" — the strongest rule seven bags could
+   * support — and recorded the cost: two crops sharing a packet icon,
+   * distinguishable by name on hover but not at a glance.
+   *
+   * `ICON_ALL_CROPS` draws a bag for every crop in its own colours, so the
+   * weakened version is retired rather than kept as a floor.
+   */
+  it('gives every crop its own seed bag, inside the sheet', () => {
+    const frames = CROP_IDS.map((id) => CROPS[id].seedBagFrame);
+    const cells = ICON_ALL_CROPS.cols * ICON_ALL_CROPS.rows;
+
+    for (const [i, frame] of frames.entries()) {
+      expect(frame, CROP_IDS[i]).toBeGreaterThanOrEqual(0);
+      expect(frame, CROP_IDS[i]).toBeLessThan(cells);
+    }
+
+    const seen = new Map<number, string[]>();
+    for (const [i, frame] of frames.entries()) {
+      seen.set(frame, [...(seen.get(frame) ?? []), CROP_IDS[i]!]);
+    }
+    const shared = [...seen]
+      .filter(([, crops]) => crops.length > 1)
+      .map(([frame, crops]) => `frame ${frame}: ${crops.join(', ')}`);
+
+    expect(shared, 'two crops would show the same packet in the hotbar').toEqual([]);
   });
 
   it('each crop uses its own sheet, and every sheet is used once', () => {
@@ -570,7 +743,12 @@ describe('items', () => {
     // to miss by eye and trivial to catch here.
     // Kept as two maps rather than one: a sheet has a frame grid, a single
     // image has exactly one frame, and conflating them loses that distinction.
-    const sheets = new Map(SHEETS.map((s) => [s.key, s]));
+    //
+    // `ICON_SHEETS` joins `SHEETS` here (T-34.04). It is a third manifest list
+    // holding sheets that are never painted on a map and therefore consume no
+    // gid — a distinction that matters to `TILESET_RUNS` and to nothing else,
+    // so as far as an ITEM icon is concerned the two are one lookup.
+    const sheets = new Map([...SHEETS, ...ICON_SHEETS].map((s) => [s.key, s]));
     const images = new Map(IMAGES.map((i) => [i.key, i]));
 
     for (const id of ITEM_IDS) {
@@ -591,15 +769,43 @@ describe('items', () => {
     }
   });
 
-  it('no two items share an icon', () => {
-    // Two items with the same icon is almost always a copy-paste placeholder.
+  /**
+   * Two items with the same icon is almost always a copy-paste placeholder —
+   * **except among seeds**, where T-31.04 made it unavoidable: the pack ships
+   * seven seed bags and the game has twenty crops. The exclusion is scoped to
+   * exactly that category and no wider, so a tool sharing an icon with a
+   * material, or two produce items sharing one, still fails here.
+   *
+   * Seeds are not left unchecked; they are checked by a rule they can satisfy
+   * — `spreads the seven seed bags as evenly as twenty crops allow`, above.
+   */
+  it('no two items share an icon, seeds excepted', () => {
     const seen = new Map<string, string>();
     for (const id of ITEM_IDS) {
-      const { icon, name } = ITEMS[id]!;
-      const key = `${icon.sheet}#${icon.frame}`;
-      expect(seen.has(key), `${name} shares an icon with ${seen.get(key)}`).toBe(false);
-      seen.set(key, name);
+      const item = ITEMS[id]!;
+      if (item.category === ItemCategory.SEED) continue;
+
+      const key = `${item.icon.sheet}#${item.icon.frame}`;
+      expect(seen.has(key), `${item.name} shares an icon with ${seen.get(key)}`).toBe(false);
+      seen.set(key, item.name);
     }
+  });
+
+  /**
+   * The other half of the seed exception: produce must still be unique, and
+   * it is unique **for free** because each produce icon is its own crop's
+   * sheet at its own last frame. Asserted separately so that if a future crop
+   * ever borrowed another's sheet, it fails as "two crops look identical"
+   * rather than disappearing into the seed exemption above.
+   */
+  it('every produce item has an icon no other item uses', () => {
+    const produceIds = ITEM_IDS.filter((id) => ITEMS[id]!.category === ItemCategory.PRODUCE);
+    expect(produceIds.length, 'no produce items — this test would vacuously pass').toBe(
+      CROP_IDS.length,
+    );
+
+    const icons = produceIds.map((id) => `${ITEMS[id]!.icon.sheet}#${ITEMS[id]!.icon.frame}`);
+    expect(new Set(icons).size, 'two produce items share an icon').toBe(icons.length);
   });
 
   it('all prices are non-negative integers', () => {
@@ -632,25 +838,149 @@ describe('items', () => {
    * `tradeable`). Pinning them here means a new tool cannot be added with a
    * price by copy-paste.
    */
-  it('no tool can be bought, sold, or traded, and none stacks', () => {
+  it('no tool can be sold or traded, and none stacks', () => {
     const tools = ITEM_IDS.map((id) => ITEMS[id]!).filter(
       (item) => item.category === ItemCategory.TOOL,
     );
-    expect(tools.length, 'the MVP ships a hoe and a watering can').toBeGreaterThanOrEqual(2);
+    expect(tools.length, 'the MVP ships a hoe, a can and an axe').toBeGreaterThanOrEqual(3);
 
     for (const item of tools) {
-      expect(item.shopBuyPrice, `${item.id} is purchasable`).toBeNull();
+      // Buying is per-tool since T-20.05 — see `tool()`. Selling and trading
+      // are still banned outright, and for a reason that did not change: a tool
+      // the merchant restocks at a fixed price has no scarcity, so a sell price
+      // would be a faucet with a buy-back loop and a trade would be a market in
+      // nothing.
       expect(item.shopSellPrice, `${item.id} is sellable`).toBeNull();
       expect(item.tradeable, `${item.id} is tradeable`).toBe(false);
       expect(item.stackLimit, `${item.id} stacks`).toBe(1);
     }
   });
 
+  /**
+   * The rule buying replaced, stated positively: **every tool must be
+   * obtainable by exactly one route.** Granted at registration, or sold. A tool
+   * that is neither cannot be got at all, and a tool that is both is a free
+   * duplicate of something the player already owns.
+   */
+  it('makes every tool obtainable exactly one way', () => {
+    const granted = new Set(STARTING_ITEMS.map((i) => i.itemId));
+
+    for (const id of ITEM_IDS) {
+      const item = ITEMS[id]!;
+      if (item.category !== ItemCategory.TOOL) continue;
+
+      const isGranted = granted.has(id);
+      const isSold = item.shopBuyPrice !== null;
+      expect(isGranted !== isSold, `${id}: granted=${isGranted} sold=${isSold}`).toBe(true);
+    }
+  });
+
   it('the MVP tools exist under the ids the client and server both use', () => {
-    for (const id of ['hoe_wood', 'watering_can_wood']) {
+    for (const id of ['hoe_wood', 'watering_can_wood', 'axe_wood']) {
       expect(ITEMS[id], id).toBeDefined();
       expect(ITEMS[id]!.category).toBe(ItemCategory.TOOL);
     }
+  });
+
+  /**
+   * T-20.02 — the axe and wood.
+   *
+   * The axe exists so `ToolKind.AXE` is something `actionFor` can match on, and
+   * it is deliberately **not granted and not on sale** until chopping works
+   * (T-20.03) and the shop entry lands (T-20.05). Phase 20's ordering rule is
+   * that nothing becomes buyable before it is usable, and this is what stops a
+   * later task quietly breaking it.
+   */
+  /**
+   * The axe is the ONE tool the merchant sells, because it is the one tool
+   * registration does not hand out.
+   *
+   * This test read *"declares an axe that is not yet obtainable by any route"*
+   * until T-20.05, and asserted the opposite of what it asserts now — which is
+   * what it was for. Phase 20's ordering rule is that nothing becomes buyable
+   * before it is usable, and this is the checkpoint where "usable" became true.
+   */
+  it('sells the axe, and only the axe, among tools', () => {
+    const axe = ITEMS['axe_wood']!;
+    expect(axe.toolKind).toBe(ToolKind.AXE);
+    expect(STARTING_ITEMS.some((i) => i.itemId === 'axe_wood'), 'granted at registration').toBe(
+      false,
+    );
+    expect(axe.shopBuyPrice).toBeGreaterThan(0);
+
+    const soldTools = ITEM_IDS.map((id) => ITEMS[id]!).filter(
+      (i) => i.category === ItemCategory.TOOL && i.shopBuyPrice !== null,
+    );
+    expect(soldTools.map((i) => i.id)).toEqual(['axe_wood']);
+  });
+
+  /**
+   * The axe's price against what it unlocks, not against the other tools —
+   * there is nothing to compare it to, since it is the only one with a price.
+   *
+   * It must be a real decision out of 500 starting gold, and it must pay for
+   * itself in days rather than weeks, or it is a tax on trying the feature.
+   */
+  it('prices the axe so chopping pays it back in days, not weeks', () => {
+    const axe = ITEMS['axe_wood']!.shopBuyPrice!;
+    const woodPerDay = TREES.length * WOOD_PER_TREE * Math.floor((24 * HOUR) / TREE_REGROW_MS);
+    const goldPerDay = woodPerDay * ITEMS['wood']!.shopSellPrice!;
+
+    expect(axe / goldPerDay, 'days of full chopping to break even').toBeLessThan(2);
+    // ...and still a real purchase on day one, not pocket change.
+    expect(axe).toBeGreaterThan(ITEMS['onion_seeds']!.shopBuyPrice!);
+  });
+
+  /**
+   * Wood is a MATERIAL, which is a new category — and the point of it is that
+   * a material is not produce. If it were `PRODUCE` it would read as something
+   * a plot grew, and anything filtering on produce (harvest XP, shop grouping)
+   * would silently pick up a log.
+   */
+  it('declares wood as a tradeable material with a deliberately low floor price', () => {
+    const wood = ITEMS['wood']!;
+
+    expect(wood.category).toBe(ItemCategory.MATERIAL);
+    expect(wood.category).not.toBe(ItemCategory.PRODUCE);
+    expect(wood.tradeable, 'wood has real scarcity, unlike a tool').toBe(true);
+    expect(wood.shopBuyPrice, 'wood is gathered, never bought').toBeNull();
+
+    /*
+     * The floor, pinned as a RELATION. `trees.ts` argues wood must sell for
+     * less than anything a plot grows, because its real job is to be a crafting
+     * input and a material that sells well is one nobody crafts with. Asserting
+     * `8` would pass just as happily if every crop were retuned to 5g.
+     */
+    const cheapestCrop = Math.min(
+      ...ITEM_IDS.map((id) => ITEMS[id]!)
+        .filter((i) => i.category === ItemCategory.PRODUCE)
+        .map((i) => i.shopSellPrice!),
+    );
+    expect(wood.shopSellPrice!).toBeLessThan(cheapestCrop);
+  });
+
+  /**
+   * The faucet in gold, which is the number that actually matters to the
+   * economy (§5.8). 45 wood/day at this price must stay a supplement — less
+   * than a single day of one mature onion plot — or chopping five trees becomes
+   * a better use of a session than farming.
+   *
+   * **This caught the first price.** Wood opened at 8g, which put the faucet at
+   * 360g/day against one onion plot's 330 — five chops beating a plot that has
+   * to be planted, watered twice and harvested. The price came down to 5g; the
+   * assertion did not move. Comparing against ONE plot rather than a full farm
+   * is deliberate: a whole farm out-earns everything, so it would prove nothing.
+   */
+  it('keeps the daily wood faucet below a single onion plot‘s daily yield', () => {
+    const woodPerDay = TREES.length * WOOD_PER_TREE * Math.floor((24 * HOUR) / TREE_REGROW_MS);
+    const goldPerDay = woodPerDay * ITEMS['wood']!.shopSellPrice!;
+
+    const onion = CROPS[CropId.ONION];
+    const onionGoldPerDay =
+      Math.floor((24 * HOUR) / onion.growthDurationMs) * ITEMS['onion']!.shopSellPrice!;
+
+    expect(goldPerDay).toBe(225);
+    expect(goldPerDay).toBeLessThan(onionGoldPerDay);
   });
 
   /**
@@ -698,6 +1028,264 @@ describe('items', () => {
       );
     }
   });
+
+  /* ---------------------------------------------------------------- *
+   * The crop economy, across the whole table (T-31.04)
+   * ---------------------------------------------------------------- */
+
+  /**
+   * Profit for one planting: what the harvest sells for, minus the seed.
+   *
+   * Gold and quantities are integers everywhere (§10), and every crop's gross
+   * revenue is an exact integer by construction — `yieldAmount x sellPrice` —
+   * so this never produces a fraction.
+   */
+  function cropProfit(id: (typeof CROP_IDS)[number]): number {
+    const crop = CROPS[id];
+    return (
+      (ITEMS[crop.produceItemId]!.shopSellPrice ?? 0) * crop.yieldAmount -
+      (ITEMS[crop.seedItemId]!.shopBuyPrice ?? 0)
+    );
+  }
+
+  function cropGoldPerHour(id: (typeof CROP_IDS)[number]): number {
+    return cropProfit(id) / (CROPS[id].growthDurationMs / HOUR);
+  }
+
+  /**
+   * **The band that replaced the flat 20-22.5 g/hr** (T-31.04).
+   *
+   * Four crops were priced within 2.5 g/hr of each other, which was right when
+   * choosing a crop meant choosing how long to be away and nothing else. With
+   * twenty crops spanning 12 minutes to 16 hours, a flat rate makes nineteen
+   * of them interchangeable — so the rate now rises with commitment, from
+   * **15 g/hr** on the 12-minute crop to **28 g/hr** on the 16-hour one.
+   *
+   * The bounds are deliberately a little wider than the shipped extremes so a
+   * small retune does not have to edit the test, and narrow enough that a
+   * mistyped price does. A crop paying 300 g/hr is a duplication exploit
+   * waiting to be found by a player rather than by this file.
+   */
+  const CROP_RATE_MIN = 14;
+  const CROP_RATE_MAX = 30;
+
+  it('every crop earns inside the documented g/hr band', () => {
+    const outside = CROP_IDS.filter((id) => {
+      const rate = cropGoldPerHour(id);
+      return rate < CROP_RATE_MIN || rate > CROP_RATE_MAX;
+    }).map((id) => `${id} at ${cropGoldPerHour(id).toFixed(2)} g/hr`);
+
+    expect(
+      outside,
+      `crops must earn between ${CROP_RATE_MIN} and ${CROP_RATE_MAX} g/hr`,
+    ).toEqual([]);
+  });
+
+  /**
+   * **The rule that keeps twenty crops from being one crop and nineteen traps.**
+   *
+   * The obvious invariant — "g/hr rises with duration" — is the wrong one, and
+   * the shipped table proves it: onion (8h, 21.25 g/hr) has always earned less
+   * per hour than strawberry (4h, 22.50). Onion is not a trap, because it is
+   * harvested once where strawberry is harvested twice, and in an idle game
+   * (§1) a visit is the scarce resource, not an hour.
+   *
+   * So the real rule is about the VISIT: **a longer crop must pay more per
+   * harvest than every shorter one**. That is what makes committing to 16
+   * hours a choice rather than a penalty, and it is violated by exactly the
+   * mistake worth catching — a new crop slotted in at a duration where it
+   * out-waits a cheaper crop and out-earns nothing.
+   *
+   * Ties fail too: two crops of different lengths paying the same per harvest
+   * means the longer one is strictly worse.
+   */
+  it('a longer crop always pays more per harvest than a shorter one', () => {
+    const byDuration = [...CROP_IDS].sort(
+      (a, b) => CROPS[a].growthDurationMs - CROPS[b].growthDurationMs,
+    );
+
+    const dominated: string[] = [];
+    for (let i = 1; i < byDuration.length; i++) {
+      const longer = byDuration[i]!;
+      const shorter = byDuration[i - 1]!;
+      if (cropProfit(longer) <= cropProfit(shorter)) {
+        dominated.push(
+          `${longer} (${CROPS[longer].growthDurationMs / HOUR}h, ${cropProfit(longer)}g) ` +
+            `does not out-pay ${shorter} ` +
+            `(${CROPS[shorter].growthDurationMs / HOUR}h, ${cropProfit(shorter)}g)`,
+        );
+      }
+    }
+
+    expect(dominated, 'a longer crop that pays no more is dead content').toEqual([]);
+  });
+
+  /**
+   * Two crops of the SAME length would be a coin-flip decided by price alone,
+   * which is the definition of one of them being pointless. Distinct durations
+   * are also what makes the rule above a total order rather than a partial one.
+   */
+  /* ---------------------------------------------------------------- *
+   * Level-gated seeds (T-31.06)
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **Level 1 has to be a game, not a teaser.** Gating the shop is the first
+   * thing farm level is spent on, and the failure mode is a new player looking
+   * at a shop where almost everything is greyed out — which reads as a paywall
+   * rather than as progression.
+   *
+   * Five is chosen against what level 1 actually needs to contain: something
+   * that ripens inside the first session, something overnight, and enough in
+   * between that a player has a real choice on day one.
+   */
+  const LEVEL_ONE_MINIMUM = 5;
+
+  it('stocks enough at level 1 for the first session to be a game', () => {
+    const atLevelOne = CROP_IDS.filter((id) => CROPS[id].unlockLevel === 1);
+
+    expect(
+      atLevelOne.length,
+      `only ${atLevelOne.length} crops at level 1: ${atLevelOne.join(', ')}`,
+    ).toBeGreaterThanOrEqual(LEVEL_ONE_MINIMUM);
+    expect(MIN_CROP_UNLOCK_LEVEL, 'nothing is buyable at level 1 at all').toBe(1);
+  });
+
+  /**
+   * The starter kit hands out seeds; the merchant has to sell more of the same
+   * crop, or a new player plants their four parsnips and cannot replace them.
+   * That is the one unlock level that is not a balance choice — it is a
+   * correctness constraint between two config files.
+   */
+  it('sells every crop the starter kit grants, from level 1', () => {
+    for (const entry of STARTING_ITEMS) {
+      const crop = cropForSeed(entry.itemId);
+      if (crop === null) continue;
+      expect(
+        CROPS[crop].unlockLevel,
+        `${crop} is in the starter kit but locked behind level ${CROPS[crop].unlockLevel}`,
+      ).toBe(1);
+    }
+  });
+
+  it('never gates a crop behind a level the game cannot reach', () => {
+    for (const id of CROP_IDS) {
+      const level = CROPS[id].unlockLevel;
+      expect(Number.isInteger(level), `${id} unlock level ${level}`).toBe(true);
+      expect(level, id).toBeGreaterThanOrEqual(1);
+      expect(level, `${id} unlocks at ${level}, past the level cap`).toBeLessThanOrEqual(
+        MAX_FARM_LEVEL,
+      );
+    }
+  });
+
+  /**
+   * **Unlocks follow commitment, not price.** A crop that takes longer is the
+   * later crop, because the reason to gate them at all is to introduce the
+   * game one wait at a time — and the T-31.04 table already makes profit per
+   * harvest rise with duration, so unlocking a long crop early would hand a
+   * level-2 player the best per-visit return in the game.
+   *
+   * Non-strict: several crops share an unlock level deliberately, so the
+   * player gets a *choice* at each step rather than a single new row.
+   */
+  it('unlocks crops in the order they take longer, never the reverse', () => {
+    const byDuration = [...CROP_IDS].sort(
+      (a, b) => CROPS[a].growthDurationMs - CROPS[b].growthDurationMs,
+    );
+
+    const inversions: string[] = [];
+    for (let i = 1; i < byDuration.length; i++) {
+      const longer = byDuration[i]!;
+      const shorter = byDuration[i - 1]!;
+      if (CROPS[longer].unlockLevel < CROPS[shorter].unlockLevel) {
+        inversions.push(
+          `${longer} (${CROPS[longer].growthDurationMs / HOUR}h) unlocks at ` +
+            `${CROPS[longer].unlockLevel}, before ${shorter} ` +
+            `(${CROPS[shorter].growthDurationMs / HOUR}h) at ${CROPS[shorter].unlockLevel}`,
+        );
+      }
+    }
+
+    expect(inversions, 'a longer crop must not unlock before a shorter one').toEqual([]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The trade gate, as an arithmetic fact (T-31.08)
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **`TRADE_MIN_FARM_LEVEL` is a security control, so its cost is pinned.**
+   *
+   * `config/level.ts` is explicit that experience exists primarily to make
+   * throwaway-account scamming expensive at scale. `docs/economy.md` now
+   * states what that costs — 494 XP, about 6.9 hours of *full cultivation* on
+   * the six starting plots — and a number in a document drifts. This is the
+   * same figure, computed, so a phase that changes `XP_PER_UNIT_MS`,
+   * `FARM_LEVEL_XP` or `STARTING_PLOTS` fails here and has to say so.
+   *
+   * The band is deliberately wide: this is not asserting a balance choice, it
+   * is asserting that nobody has quietly made the gate an afternoon or a
+   * fortnight.
+   */
+  it('keeps the trade gate roughly a working day of cultivation away', () => {
+    const need = FARM_LEVEL_XP[TRADE_MIN_FARM_LEVEL - 1]!;
+    const idealPerPlot = 3_600_000 / XP_PER_UNIT_MS;
+    const hours = need / (idealPerPlot * STARTING_PLOTS);
+
+    expect(hours, `level ${TRADE_MIN_FARM_LEVEL} is ${hours.toFixed(1)}h of cultivation`)
+      .toBeGreaterThan(4);
+    expect(hours, `level ${TRADE_MIN_FARM_LEVEL} is ${hours.toFixed(1)}h of cultivation`)
+      .toBeLessThan(12);
+  });
+
+  /**
+   * **Animals are the other half of the XP faucet, and were untested.**
+   * `level.test.ts` pins the crop ceiling; nothing pinned this one, and an
+   * animal paying more per hour than a crop would be the same exploit by
+   * another route — worse, in fact, because a coop needs no replanting and so
+   * runs at full utilisation unattended.
+   */
+  it('pays animals no more experience per hour than crops', () => {
+    const ideal = 3_600_000 / XP_PER_UNIT_MS;
+
+    for (const kind of ANIMAL_KINDS) {
+      const rate = (xpForCollect(kind, 1) * 3_600_000) / ANIMALS[kind].productionIntervalMs;
+      expect(rate, `${kind} pays ${rate} XP/hr`).toBeLessThanOrEqual(ideal);
+    }
+  });
+
+  it('answers unlockLevelForSeed for seeds and null for everything else', () => {
+    for (const id of CROP_IDS) {
+      expect(unlockLevelForSeed(CROPS[id].seedItemId), id).toBe(CROPS[id].unlockLevel);
+    }
+    for (const itemId of ['hoe_wood', 'wood', 'chicken_feed', 'potato', 'not_an_item']) {
+      expect(unlockLevelForSeed(itemId), itemId).toBeNull();
+    }
+  });
+
+  it('no two crops take exactly as long as each other', () => {
+    const durations = CROP_IDS.map((id) => CROPS[id].growthDurationMs);
+    expect(new Set(durations).size, 'two crops share a growth duration').toBe(durations.length);
+  });
+
+  /**
+   * A seed that costs more than the harvest is caught above; this catches the
+   * subtler shape — a seed so cheap the crop is free money. Every shipped crop
+   * costs between a third and two-thirds of what it returns, which is what
+   * makes buying seeds a real spend rather than a formality.
+   */
+  it('every seed costs a meaningful fraction of what the crop returns', () => {
+    for (const id of CROP_IDS) {
+      const crop = CROPS[id];
+      const seedCost = ITEMS[crop.seedItemId]!.shopBuyPrice ?? 0;
+      const revenue = (ITEMS[crop.produceItemId]!.shopSellPrice ?? 0) * crop.yieldAmount;
+      const share = seedCost / revenue;
+
+      expect(share, `${id} seed is ${(share * 100).toFixed(0)}% of revenue`).toBeGreaterThan(0.3);
+      expect(share, `${id} seed is ${(share * 100).toFixed(0)}% of revenue`).toBeLessThan(0.7);
+    }
+  });
 });
 
 describe('economy', () => {
@@ -730,6 +1318,72 @@ describe('economy', () => {
       'hoe_wood',
       'watering_can_wood',
     ]);
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The starter kit closes the loop in one sitting (T-31.05, D-18)
+   * ---------------------------------------------------------------- */
+
+  /**
+   * How long a new player waits before their FIRST harvest.
+   *
+   * `docs/qa-audit-2026-09-03.md` F-1 measured a **42-minute hole at 0:03**:
+   * six plots planted in three minutes, then nothing until leek ripened at
+   * 0:45. D-18 costed three fixes and recommended a fast starter crop, on the
+   * grounds that the other two add gold to a problem that is not about gold.
+   *
+   * This is the number that fix moves, so it is a test rather than a note in a
+   * document. A future kit that quietly drops the fast crop puts the hole back
+   * and fails here.
+   */
+  const FIRST_HARVEST_CEILING_MS = 15 * 60_000;
+
+  it('grants a crop that ripens inside the first session', () => {
+    const kitCrops = STARTING_ITEMS.map((entry) => cropForSeed(entry.itemId)).filter(
+      (id): id is CropId => id !== null,
+    );
+
+    expect(kitCrops.length, 'the starter kit grants no seeds at all').toBeGreaterThan(0);
+
+    const soonest = Math.min(...kitCrops.map((id) => CROPS[id].growthDurationMs));
+    expect(
+      soonest,
+      `the fastest starter crop takes ${soonest / 60_000} minutes; a new player has to ` +
+        'complete one till-plant-water-harvest cycle before they close the tab (D-18)',
+    ).toBeLessThanOrEqual(FIRST_HARVEST_CEILING_MS);
+  });
+
+  /**
+   * The other half of the kit, and the reason it is not six of one seed: the
+   * fast crop teaches the loop, and a slower one is the first reason to come
+   * back — which is §1's whole pillar, demonstrated rather than explained.
+   */
+  it('grants something slower as well, so the kit teaches the wait too', () => {
+    const kitCrops = STARTING_ITEMS.map((entry) => cropForSeed(entry.itemId)).filter(
+      (id): id is CropId => id !== null,
+    );
+    const durations = kitCrops.map((id) => CROPS[id].growthDurationMs);
+
+    expect(new Set(durations).size, 'every starter crop ripens at the same moment').toBeGreaterThan(
+      1,
+    );
+    expect(Math.max(...durations)).toBeGreaterThan(FIRST_HARVEST_CEILING_MS);
+  });
+
+  /**
+   * The starter seeds must fill the starting plots exactly.
+   *
+   * Fewer means a new player looks at empty soil with no seed to put in it and
+   * no idea that the merchant sells more; more means seeds they cannot plant
+   * and cannot sell (seeds have no sell price by design).
+   */
+  it('grants exactly enough seed to fill the starting plots', () => {
+    const seeds = STARTING_ITEMS.filter((e) => cropForSeed(e.itemId) !== null).reduce(
+      (sum, e) => sum + e.quantity,
+      0,
+    );
+
+    expect(seeds, `${seeds} seeds for ${STARTING_PLOTS} plots`).toBe(STARTING_PLOTS);
   });
 
   it('starting plots are free and expansion is superlinear', () => {
@@ -843,6 +1497,44 @@ describe('credits', () => {
     for (const credit of CREDITS) {
       expect(credit.author.length, credit.work).toBeGreaterThan(0);
       expect(credit.url, credit.work).toMatch(/^https:\/\//);
+      expect(credit.licence.length, credit.work).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * **Every bundled font must be credited, and its licence must ship with it.**
+   *
+   * Phase U vendored two SIL OFL typefaces into `apps/client/public/fonts/`.
+   * The OFL's obligations are that the licence text travels with the font and
+   * that the Reserved Font Name is not reused on a modified copy — neither of
+   * which any amount of good intent enforces once someone adds a third font in
+   * a hurry.
+   *
+   * So the directory is the source of truth and this test reads it: a `.woff2`
+   * with no `CREDITS` row fails, and a row whose `licenceFile` is missing from
+   * disk fails. That is the whole compliance story, checked on every run.
+   */
+  it('credits every bundled font and ships its licence', () => {
+    const fontsDir = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../apps/client/public/fonts',
+    );
+
+    const bundled = readdirSync(fontsDir).filter((f) => f.endsWith('.woff2'));
+    // Guards the path: an empty read would make every assertion below vacuous.
+    expect(bundled.length, `no .woff2 found in ${fontsDir}`).toBeGreaterThan(0);
+
+    const credited = new Set(
+      CREDITS.flatMap((c) => c.files ?? []).map((f) => f.replace(/^fonts\//, '')),
+    );
+    const uncredited = bundled.filter((f) => !credited.has(f));
+    expect(uncredited, `bundled fonts with no CREDITS entry: ${uncredited}`).toEqual([]);
+
+    for (const credit of CREDITS.filter((c) => c.kind === 'font')) {
+      expect(credit.licence, credit.work).toContain('SIL Open Font License');
+      expect(credit.licenceFile, credit.work).toBeDefined();
+      const licencePath = join(fontsDir, '..', credit.licenceFile!.replace(/^\//, ''));
+      expect(existsSync(licencePath), `missing licence file for ${credit.work}`).toBe(true);
     }
   });
 });

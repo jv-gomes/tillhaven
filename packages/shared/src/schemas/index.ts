@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { CROP_IDS } from '../config/crops.js';
 import { ANIMAL_KINDS } from '../config/animals.js';
 import { IDLE_TASK_TYPES, type IdleTask } from '../config/idle.js';
+import { FARM_HEIGHT, FARM_WIDTH } from '../config/tilesets.js';
 
 /**
  * Zod schemas at the boundary (CLAUDE.md §8). The SERVER is the authority:
@@ -80,7 +81,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
  * Character appearance (T-8.01)
  *
  * Enum values are the ACTUAL folder/file names under
- * `new_assets/Character/Character/PNG/1. Idle/` (lower-cased), verified
+ * `assets/Character/Character/PNG/1. Idle/` (lower-cased), verified
  * directly against the pack rather than assumed — see the T-8.01 write-up in
  * ROADMAP.md for the listing. Purely cosmetic (§5.1): nothing here is ever
  * read by a gameplay check, and no server logic may branch on it.
@@ -174,6 +175,38 @@ export const harvestSchema = z.object({
 });
 export type HarvestInput = z.infer<typeof harvestSchema>;
 
+/**
+ * Bulk harvest — `VIP_BENEFITS.bulkHarvest` (T-24.01).
+ *
+ * Carries NO plot list. The client does not get to nominate which plots are
+ * ripe: the server already computes ripeness from timestamps for every plot it
+ * owns (§4.2), and a list in the payload would be a second opinion it would
+ * have to either trust or re-derive. Re-deriving it is the whole endpoint, so
+ * the list would be pure attack surface.
+ */
+export const harvestAllSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+});
+export type HarvestAllInput = z.infer<typeof harvestAllSchema>;
+
+/**
+ * Chopping carries a tree id and nothing else (T-20.03).
+ *
+ * No tool field, for the same reason `tillSchema` has none — but note the
+ * difference in what that costs. Tilling checks no tool at all, because every
+ * account is granted a hoe; chopping DOES require an axe, and the server looks
+ * it up in the player's own inventory rather than believing a field. A payload
+ * that named the tool would be the client asserting what it owns (§4.1).
+ *
+ * No coordinates either: the tree is named by id, so "which tree" never depends
+ * on a position the server does not track (§5.1).
+ */
+export const chopSchema = z.object({
+  treeId: uuidSchema,
+  idempotencyKey: idempotencyKeySchema,
+});
+export type ChopInput = z.infer<typeof chopSchema>;
+
 export const unlockPlotSchema = z.object({
   plotId: uuidSchema,
   idempotencyKey: idempotencyKeySchema,
@@ -197,19 +230,39 @@ export const unlockPlotSchema = z.object({
  *
  * Duplicate tasks are REFUSED rather than deduplicated. `["till","till"]` is a
  * client bug, and silently accepting it means the bug ships.
+ *
+ * **Enabled with no chores is refused too (T-18.07, BUG-09).** It parsed
+ * cleanly for five phases and it is the worst state the feature can be put in:
+ * the HUD says "your farmer is working", movement and the action key go dead —
+ * `Farm.ts` locks input on `enabled` alone — and the simulator has nothing in
+ * its task list, so it does nothing, forever. The player has given up their
+ * farm in exchange for nothing, and the only signal that anything is wrong is
+ * that nothing happens.
+ *
+ * Refused HERE rather than only in the panel, because §4.1 means the panel is a
+ * UX gate and this is a rule about what the farm may BE. `enabled` with an
+ * empty task list has no meaning the server could act on; it is not a setting,
+ * it is a contradiction.
  */
-export const idleSettingsSchema = z.object({
-  enabled: z.boolean(),
-  tasks: z
-    .array(z.enum(IDLE_TASK_TYPES as [IdleTask, ...IdleTask[]]))
-    .max(IDLE_TASK_TYPES.length)
-    .refine((tasks) => new Set(tasks).size === tasks.length, {
-      message: 'Each task may be listed only once.',
-    }),
-  /** `null` and omitted both mean "sow nothing" — see the PUT note above. */
-  cropId: z.enum(CROP_IDS as [string, ...string[]]).nullish(),
-  idempotencyKey: idempotencyKeySchema,
-});
+export const idleSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    tasks: z
+      .array(z.enum(IDLE_TASK_TYPES as [IdleTask, ...IdleTask[]]))
+      .max(IDLE_TASK_TYPES.length)
+      .refine((tasks) => new Set(tasks).size === tasks.length, {
+        message: 'Each task may be listed only once.',
+      }),
+    /** `null` and omitted both mean "sow nothing" — see the PUT note above. */
+    cropId: z.enum(CROP_IDS as [string, ...string[]]).nullish(),
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .refine((body) => !body.enabled || body.tasks.length > 0, {
+    // Pointed at `tasks`, not at `enabled`: the chore list is what is missing,
+    // and it is the field the player can do something about.
+    path: ['tasks'],
+    message: 'Choose at least one chore for your farmer to do.',
+  });
 export type IdleSettingsInput = z.infer<typeof idleSettingsSchema>;
 
 /* ------------------------------------------------------------------ *
@@ -231,6 +284,15 @@ export const feedAnimalSchema = z.object({
   animalId: uuidSchema,
   idempotencyKey: idempotencyKeySchema,
 });
+
+/**
+ * Bulk collect — `VIP_BENEFITS.autoCollect` (T-24.02). Same reasoning as
+ * `harvestAllSchema`: no animal list, because the server owns the answer.
+ */
+export const collectAllSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+});
+export type CollectAllInput = z.infer<typeof collectAllSchema>;
 
 /* ------------------------------------------------------------------ *
  * Inventory intents
@@ -312,6 +374,88 @@ export const shippingDepositSchema = z.object({
 export type ShippingDepositInput = z.infer<typeof shippingDepositSchema>;
 
 /* ------------------------------------------------------------------ *
+ * Milestones (T-30.08)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Claiming one earned milestone.
+ *
+ * The id only. Whether it is EARNED is the server's arithmetic over counters
+ * it derives itself (§4.1), and whether it is already CLAIMED is a unique
+ * index, not a field the client could assert.
+ */
+export const claimMilestoneSchema = z.object({
+  milestoneId: z.string().min(1).max(64),
+  idempotencyKey: idempotencyKeySchema,
+});
+export type ClaimMilestoneInput = z.infer<typeof claimMilestoneSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Quests (T-33.05)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Accepting a quest, and turning one in.
+ *
+ * **The id and nothing else, on both.** Whether the quest is offered is derived
+ * from the farm's level, which the server holds; whether the player has the
+ * items is a locked read of their own inventory; whether it is already done is a
+ * unique index. There is nothing here a client could usefully assert, which is
+ * the point (§4.1) — and no player id, so "somebody else's quest" is
+ * unexpressible rather than merely refused.
+ */
+export const acceptQuestSchema = z.object({
+  questId: z.string().min(1).max(64),
+  idempotencyKey: idempotencyKeySchema,
+});
+export type AcceptQuestInput = z.infer<typeof acceptQuestSchema>;
+
+export const turnInQuestSchema = z.object({
+  questId: z.string().min(1).max(64),
+  idempotencyKey: idempotencyKeySchema,
+});
+export type TurnInQuestInput = z.infer<typeof turnInQuestSchema>;
+
+/* ------------------------------------------------------------------ *
+ * Fishing (T-34.02)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Casting a line.
+ *
+ * **An idempotency key and nothing else.** There is deliberately no position:
+ * standing at water is a client-side UX gate (§5.1), and a server that accepted
+ * coordinates would be the first place in this game to treat the character's
+ * position as authority. There is also no bait, no rod tier and no target —
+ * everything the cast depends on, the server already holds.
+ */
+export const castSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+});
+export type CastInput = z.infer<typeof castSchema>;
+
+/**
+ * Reeling in.
+ *
+ * **The cast id and nothing else, and `.strict()` is load-bearing here.**
+ * Every other schema in this file is permissive about extra keys because extra
+ * keys are harmless when nothing reads them. This one refuses them, because the
+ * exploit it guards against is a client that helpfully includes its own
+ * `reactionMs` — and the honest failure for that is a 400 saying the field is
+ * not accepted, not a silent success that leaves the sender believing it worked.
+ *
+ * A client that reports its own reaction time reports a perfect one. The server
+ * has `biteAt` and its own clock; that is the entire judgement.
+ */
+export const reelSchema = z
+  .object({
+    castId: z.string().uuid(),
+    idempotencyKey: idempotencyKeySchema,
+  })
+  .strict();
+export type ReelInput = z.infer<typeof reelSchema>;
+
+/* ------------------------------------------------------------------ *
  * House interior (CLAUDE.md §5.5)
  * ------------------------------------------------------------------ */
 
@@ -320,6 +464,43 @@ export type ShippingDepositInput = z.infer<typeof shippingDepositSchema>;
  * actual room size and the piece's footprint, because only it knows both.
  */
 const roomCellSchema = z.number().int().nonnegative().max(64);
+
+/* ------------------------------------------------------------------ *
+ * Farm decoration (T-15.20)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A tile coordinate on the farm.
+ *
+ * Bounded by the map rather than left as a bare integer: the placement rules
+ * refuse anything off the map anyway, but a schema that accepts 2^31 lets a
+ * hostile payload reach the flood fill and make it allocate. Cheap to say here.
+ */
+const farmTileSchema = z.number().int().min(0).max(Math.max(FARM_WIDTH, FARM_HEIGHT) - 1);
+
+export const buyDecorSchema = z.object({
+  decorId: z.string().min(1).max(64),
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const placeDecorSchema = z.object({
+  decorId: z.string().min(1).max(64),
+  x: farmTileSchema,
+  y: farmTileSchema,
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const moveDecorSchema = z.object({
+  placementId: uuidSchema,
+  x: farmTileSchema,
+  y: farmTileSchema,
+  idempotencyKey: idempotencyKeySchema,
+});
+
+export const removeDecorSchema = z.object({
+  placementId: uuidSchema,
+  idempotencyKey: idempotencyKeySchema,
+});
 
 export const buyFurnitureSchema = z.object({
   furnitureId: z.string().min(1).max(64),
@@ -360,6 +541,24 @@ export const upgradeSchema = z.object({
   idempotencyKey: idempotencyKeySchema,
 });
 export type UpgradeInput = z.infer<typeof upgradeSchema>;
+
+/**
+ * Going to bed, and getting up again.
+ *
+ * **Carries nothing but the key**, and that is the same argument
+ * `upgradeSchema` makes. A duration, a "wake at" time or an amount of energy
+ * would all be things the client could get wrong or lie about; the server has
+ * a clock and `SLEEP_DURATION_MS`, so the only thing the wire needs to say is
+ * *which* of the two things is happening — and the URL says that.
+ *
+ * There is no bed id either. A player has one house and one bed; standing at
+ * it is a client-side UX gate like every other adjacency check (§5.1), so
+ * accepting an id would invite one to be harvested from somewhere else.
+ */
+export const sleepSchema = z.object({
+  idempotencyKey: idempotencyKeySchema,
+});
+export type SleepInput = z.infer<typeof sleepSchema>;
 
 /* ------------------------------------------------------------------ *
  * Shop intents

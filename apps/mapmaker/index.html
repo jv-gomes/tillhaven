@@ -20,6 +20,10 @@
         <button class="tool" data-tool="erase" title="Erase (E)">Erase</button>
         <button class="tool" data-tool="object" title="Place objects (O)">Object</button>
         <button class="tool" data-tool="plot" title="Mark farm plots (P)">Plot</button>
+        <button class="tool" data-tool="anim" title="Stamp animated ground (A)">Anim</button>
+        <button class="tool" data-tool="collide" title="Paint collision, sub-tile (C)">
+          Collide
+        </button>
       </div>
 
       <div class="group">
@@ -29,6 +33,7 @@
 
       <div class="group">
         <label class="check"><input type="checkbox" id="grid" checked /> Grid</label>
+        <label class="check" title="The house, coop and barn are drawn from their tier art, not from this map — this is the ground they stand on."><input type="checkbox" id="reserved" checked /> Buildings</label>
         <label class="check"><input type="checkbox" id="dim" /> Dim other layers</label>
         <button id="fit" title="Fit map to view (F)">Fit</button>
       </div>
@@ -107,6 +112,77 @@
           </p>
           <ol id="plot-list" class="plots"></ol>
           <button id="clear-plots">Clear all</button>
+        </section>
+
+        <section class="block">
+          <h2>Animated ground <span id="anim-count" class="badge">0</span></h2>
+          <select id="anim-select"></select>
+          <p class="hint">
+            Click to stamp, Alt-click to clear. The map records <i>where</i>; the frames and
+            the rate live in shared config, so re-timing one is a config edit, not a map
+            change.
+          </p>
+          <div class="anim-play-row">
+            <div id="anim-play" class="anim-play" title="Live preview"></div>
+            <div id="anim-notes" class="hint"></div>
+          </div>
+
+          <details id="anim-editor" open>
+            <summary>Make an animation</summary>
+            <p class="hint">
+              Pick any tile in the palette on the left — <b>any sheet</b> — and press
+              <b>Add frame</b>. Frames go in the order you add them; drag to reorder,
+              &times; to remove. Repeat a frame to hold on it.
+            </p>
+
+            <div class="row">
+              <button id="anim-new">+ New</button>
+              <button id="anim-duplicate">Duplicate</button>
+              <button id="anim-delete">Delete</button>
+            </div>
+
+            <label class="field">Name <input type="text" id="anim-name" size="14" /></label>
+            <label class="field">
+              Id <input type="text" id="anim-id" size="14" spellcheck="false" />
+            </label>
+            <label class="field">
+              FPS <input type="number" id="anim-fps" min="1" max="60" step="1" size="4" />
+            </label>
+
+            <div class="row">
+              <button id="anim-add-frame" class="primary">Add frame</button>
+            </div>
+
+            <div id="anim-strip" class="anim-preview"></div>
+
+            <p class="hint">
+              Built-ins are editable: the first change forks one into an override that
+              <b>keeps its id</b>, so every cell already stamped with it follows.
+              <b>Reset to built-in</b> puts the original back. Use <b>Duplicate</b> when you
+              want a second animation instead of a changed one.
+            </p>
+            <p class="hint">
+              Changing an <b>Id</b> orphans every cell already stamped with the old one.
+            </p>
+            <button id="anim-save" class="primary">Save animations</button>
+          </details>
+
+          <button id="clear-anims">Clear all</button>
+        </section>
+
+        <section class="block">
+          <h2>Collision <span id="collide-count" class="badge">0</span></h2>
+          <p class="hint">
+            Sub-tile: each tile is 3&times;3 cells. Click a cell, Shift-click a whole tile,
+            Alt-click to erase. This is <b>added to</b> the art's own collision — building
+            silhouettes and shorelines are measured from the sprites and stay there.
+          </p>
+          <p class="hint">
+            After saving, run <code>pnpm collision</code> so the server sees it too — its
+            trap-guard refuses fences that would wall you in, and it can only do that if it
+            knows what you painted.
+          </p>
+          <button id="clear-collision">Clear all</button>
         </section>
 
         <section class="block">

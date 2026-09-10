@@ -10,10 +10,16 @@ import type { Palette } from '../tilesets/palettes.js';
 import { frameRect } from '../tilesets/palettes.js';
 import { crisp, imageFor } from './images.js';
 import type { Stamp } from '../tools/stamp.js';
-import { toGid } from '@tillhaven/shared/config';
+import { isGroundScatterFrame, sheetAnimationFrames, toGid } from '@tillhaven/shared/config';
 
 /** Gap between frames so adjacent tiles are visually separable. */
 const GAP = 2;
+
+/** Marks a cell that animates once painted. The same cyan the Anim tool uses. */
+const ANIM_DOT = 'rgba(46,175,199,0.95)';
+
+/** Marks a prop the farm's ground scatter already uses — safe on `decor`. */
+const SCATTER_TICK = 'rgba(140,225,110,0.95)';
 
 export interface PaletteSelection {
   /** Top-left frame cell of the selection, in palette grid coords. */
@@ -69,6 +75,46 @@ export function drawPalette(
       if (img) {
         const { sx, sy, sw, sh } = frameRect(run, frame);
         ctx.drawImage(img, sx, sy, sw, sh, dx, dy, sw * zoom, sh * zoom);
+      }
+
+      /*
+       * A dot on cells that animate where they are painted.
+       *
+       * **The layout is animated; not every cell in it is.** Both water sheets
+       * carry flat fills and pure-grass pieces that repeat unchanged across all
+       * four blocks. Without this the two are indistinguishable in the picker,
+       * and the farm's top row was painted from a static one — the mechanism
+       * working perfectly, the art with nothing to show, and no way to tell
+       * until after a save and a reload.
+       */
+      if (sheetAnimationFrames(run.key, frame)) {
+        ctx.fillStyle = ANIM_DOT;
+        ctx.beginPath();
+        ctx.arc(dx + run.tileWidth * zoom - 4, dy + 4, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      /*
+       * A corner tick on the props the farm's own ground scatter uses.
+       *
+       * Those eleven frames were chosen by hand for the `decor` layer against a
+       * constraint the art does not advertise: decor draws BELOW every world
+       * sprite, so anything with height is drawn behind the player forever. Grass
+       * and pebbles have no height to get wrong. Marking them lets someone adding
+       * flowers by hand match what is already there — and find what to erase.
+       *
+       * A tick rather than a second dot, in a different colour: two dots would
+       * be two facts encoded the same way, and the sheets where both appear are
+       * exactly the ones where telling them apart matters.
+       */
+      if (isGroundScatterFrame(run.key, frame)) {
+        ctx.strokeStyle = SCATTER_TICK;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(dx + 2, dy + run.tileHeight * zoom - 5);
+        ctx.lineTo(dx + 5, dy + run.tileHeight * zoom - 2);
+        ctx.lineTo(dx + 10, dy + run.tileHeight * zoom - 9);
+        ctx.stroke();
       }
     }
   }

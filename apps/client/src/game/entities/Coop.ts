@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { COOP_ANCHOR, COOP_TIER_ART, TILE_SIZE } from '@tillhaven/shared/config';
-import { DEPTH } from '../depth.js';
+import { groundDepth } from '../depth.js';
 
 /**
  * The chicken coop, in the three sizes the player can buy (T-12.02b).
@@ -61,7 +61,7 @@ export class Coop {
       // Bottom-anchored and depth-sorted on its base, like every other thing
       // that stands on the ground here.
       .setOrigin(0, 1)
-      .setDepth(DEPTH.world + COOP_POSITION.y);
+      .setDepth(groundDepth(COOP_POSITION.y));
 
     this.setTier(tier);
   }

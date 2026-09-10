@@ -12,16 +12,17 @@
  * system cannot afford. Deriving it means there is no window at all.
  */
 
-export const TradeStatus = {
-  /** Invited; the recipient has not answered yet. */
-  PENDING: 'pending',
-  /** Accepted. Both parties may set offers and confirm. */
-  OPEN: 'open',
-  CANCELLED: 'cancelled',
-  EXPIRED: 'expired',
-  COMPLETED: 'completed',
-} as const;
-export type TradeStatus = (typeof TradeStatus)[keyof typeof TradeStatus];
+/**
+ * Re-exported from shared (T-18.21), where it is now the single declaration.
+ * Kept as a named export here so every existing importer in this module is
+ * untouched — the values are identical, only their home moved.
+ */
+import { TradeStatus } from '@tillhaven/shared';
+
+// Carries BOTH meanings — `TradeStatus` in shared is a const object and a type
+// alias of the same name, and a plain re-export brings both across. Every
+// existing importer in this module is untouched; only the values' home moved.
+export { TradeStatus };
 
 /** States a trade can still move on from. */
 const LIVE: readonly TradeStatus[] = [TradeStatus.PENDING, TradeStatus.OPEN];

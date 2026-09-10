@@ -3,7 +3,9 @@ import {
   GameError,
   ErrorCode,
   STARTING_GOLD,
+  STARTING_FURNITURE,
   STARTING_ITEMS,
+  TREES,
   type RegisterInput,
   type LoginInput,
 } from '@tillhaven/shared';
@@ -91,6 +93,16 @@ export async function register(
     );
 
     /*
+     * The farm's trees (T-20.01). Seeded from `TREES`, which is also what
+     * `MAP_OBJECTS` bakes into `farm.json`, so the rows and the picture cannot
+     * describe different forests. `choppedAt` stays null: a new farm's trees
+     * have always stood.
+     */
+    await tx.insert(schema.trees).values(
+      TREES.map((t) => ({ farmId, x: t.x, y: t.y })),
+    );
+
+    /*
      * The starter kit. Inserted directly rather than through addItem: the
      * inventory is provably empty at this point, so there is no stacking or
      * capacity question to answer, and this stays inside the one transaction.
@@ -102,6 +114,27 @@ export async function register(
         slotIndex: index,
         itemId: item.itemId,
         quantity: item.quantity,
+      })),
+    );
+
+    /*
+     * The house a new player walks into (T-18.25). Placed rather than banked:
+     * rows go into `furniture_placements` and none into `furniture_owned`, so
+     * removing a starter piece returns it to storage exactly like any other and
+     * conservation stays exact. Granting both would let a player remove one and
+     * end up owning two.
+     *
+     * The layout is validated by `reachability.test.ts` rather than here — this
+     * path does not run `assertPlaceable`, and a starter room that sealed the
+     * doorway would ship to every account rather than to one player.
+     */
+    await tx.insert(schema.furniturePlacements).values(
+      STARTING_FURNITURE.map((piece) => ({
+        playerId,
+        furnitureId: piece.furnitureId,
+        x: piece.x,
+        y: piece.y,
+        placedAt: now,
       })),
     );
 

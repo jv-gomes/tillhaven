@@ -9,35 +9,27 @@ import { api, idempotencyKey } from './api.js';
  * predicts what a call will do before the response says so.
  */
 
-export interface TradeOfferItem {
-  readonly itemId: string;
-  readonly quantity: number;
-}
-
-export interface TradeSide {
-  readonly playerId: string;
-  readonly username: string;
-  readonly items: readonly TradeOfferItem[];
-  readonly gold: number;
-  readonly confirmed: boolean;
-}
-
-export type TradeStatus = 'PENDING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED';
-
-export interface TradeView {
-  readonly id: string;
-  readonly status: TradeStatus;
-  readonly initiatorId: string;
-  readonly recipientId: string;
-  readonly initiatorName: string;
-  readonly recipientName: string;
-  readonly revision: number;
-  readonly expiresInMs: number;
-  readonly isInitiator: boolean;
-  readonly you: TradeSide;
-  readonly them: TradeSide;
-  readonly readyToExecute: boolean;
-}
+/**
+ * The wire contract, imported rather than redeclared (T-18.21, BUG-17).
+ *
+ * These four were written out by hand here AND in
+ * `apps/server/src/modules/trade/service.ts`, and the copies had **drifted**:
+ * this file said `'PENDING' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED'`
+ * where the server sends `'pending' | 'open' | …`. `tradePanel.ts` compares
+ * `status === 'ACTIVE'`, so every status branch in the panel was dead code that
+ * could never be reached. Nothing imports the panel, so nothing ran and nothing
+ * noticed — the exact failure BUG-17 predicted.
+ *
+ * §10: shared types are defined once in `packages/shared` and imported by both
+ * sides. Now they are, and the next divergence is a compile error.
+ */
+export type {
+  TradeOfferItem,
+  TradeSide,
+  TradeStatus,
+  TradeView,
+} from '@tillhaven/shared';
+import type { TradeOfferItem, TradeView } from '@tillhaven/shared';
 
 export function fetchCurrentTrade(): Promise<{ trade: TradeView | null }> {
   return api.get<{ trade: TradeView | null }>('/trade/current');

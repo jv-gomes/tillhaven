@@ -161,36 +161,65 @@ describe('terrain-sets.json', () => {
 
 });
 
-describe('flat-fill sets (T-7.05)', () => {
-  // tileset-grass-spring.png / tileset-soil.png / tileset-paths.png turned
-  // out to be patch/kit art, not autotile blocks (see terrain.ts's comment
-  // above the array) — these sets calibrate ONLY the `c` role against a
-  // synthetic 1x1-image tileset (`runFromImage`'s tileCount=1), a different
-  // code path from every `SPRING_BLOCK_ROLES`-based set above it, which is
-  // why it gets its own coverage rather than relying on the generic test.
-  const flatIds = ['water', 'ground-grass', 'ground-soil-dry', 'ground-soil-wet', 'ground-path'];
+describe('flat-fill sets', () => {
+  /*
+   * These sets calibrate ONLY the `c` role, because the surfaces they paint
+   * have no edge art in the map: the ground layer is flat and `plots.ts` draws
+   * the tilled-soil rims at runtime from its own neighbour mask.
+   *
+   * **What changed in the re-scope**: the frames used to be 0 on synthetic 1x1
+   * images the game drew itself, because T-7.05 measured the incomplete pack
+   * and found no tile that fills its cell edge to edge. They are now measured
+   * frames of the pack's own tilesets, so `c` is 57 or 345 rather than 0, and
+   * several sets legitimately share a sheet.
+   */
+  const flatIds = [
+    'water',
+    'ground-grass',
+    'ground-tillable',
+    'ground-soil-dry',
+    'ground-soil-wet',
+    'ground-path',
+  ];
   const flatSets = flatIds.map(
     (id) => DEFAULT_TERRAIN_SETS.find((s) => s.id === id) as TerrainSet,
   );
 
   it('are present, one per flat surface, all block 0', () => {
-    for (const set of flatSets) {
-      expect(set, `${set === undefined ? 'missing' : set.id}`).toBeDefined();
-      expect(set.block).toBe(0);
-      expect(set.roles).toEqual({ c: 0 });
+    for (const [i, set] of flatSets.entries()) {
+      expect(set, `${flatIds[i]} is missing`).toBeDefined();
+      expect(set.block, flatIds[i]).toBe(0);
+      // A flat surface declares an absolute frame and no roles at all — see
+      // `TerrainSet.fillFrame` for why a block index cannot express these.
+      expect(Object.keys(set.roles), flatIds[i]).toEqual([]);
+      expect(set.fillFrame, flatIds[i]).toEqual(expect.any(Number));
     }
   });
 
-  it('resolve frame 0 for every role, not just c — the single-frame image degrades correctly', () => {
+  it('resolve the SAME frame for every role — a flat fill has no edges', () => {
     for (const set of flatSets) {
+      const fill = set.fillFrame!;
       for (const role of ROLES) {
-        expect(frameForRole(set, role), `${set.id} ${role}`).toBe(0);
+        expect(frameForRole(set, role), `${set.id} ${role}`).toBe(fill);
       }
     }
   });
 
-  it('point at distinct tileset keys — a flat fill is not reused across surfaces', () => {
-    const keys = flatSets.map((s) => s.tilesetKey);
-    expect(new Set(keys).size).toBe(keys.length);
+  /**
+   * **Distinct (tileset, frame) pairs, not distinct tilesets.**
+   *
+   * The old rule was "a flat fill is not reused across surfaces", asserted as
+   * distinct tileset KEYS — which held only while every surface had its own
+   * one-tile image. Grass and the tillable field now come from the same sheet
+   * at different frames, as do dry and wet soil, so keys collide by design.
+   *
+   * What must still hold is that no two surfaces look identical: if the
+   * tillable field ever resolved to the same frame as grass, the player would
+   * have no way to see where the field is.
+   */
+  it('paint six visibly different surfaces', () => {
+    const painted = flatSets.map((s) => `${s.tilesetKey}#${s.fillFrame}`);
+    expect(new Set(painted).size, painted.join(' ')).toBe(painted.length);
   });
 });
+

@@ -1,7 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { CROPS, CROP_IDS, WATER_DURATION_MS, HOUR } from '@tillhaven/shared/config';
+import { CROPS, CROP_IDS, ITEMS, TILESET_SOIL, WATER_DURATION_MS, HOUR } from '@tillhaven/shared/config';
 import type { PlotView } from '@tillhaven/shared/types';
-import { displayAt, soilAt } from './plots.js';
+import {
+  SOIL_E,
+  SOIL_N,
+  SOIL_S,
+  SOIL_W,
+  THIRSTY_ITEM_ID,
+  displayAt,
+  plotBadgeFor,
+  soilAt,
+  soilFrame,
+  soilMaskAt,
+  thirstyCount,
+  tileKey,
+  type PlotDisplay,
+} from './plots.js';
 
 /**
  * These are the client's half of CLAUDE.md §4.1: the client may draw what it
@@ -320,4 +334,256 @@ describe('every crop', () => {
       });
     });
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * Thirst (T-18.16, F-2)
+ * ------------------------------------------------------------------ */
+
+/**
+ * D-1 made the whole farming loop turn on watering, and until T-18.16 the only
+ * sign a crop had stopped growing was a hover countdown reading `DRY`. A player
+ * who does not hover never learns why nothing is happening: the game looks
+ * broken and the fix is one keypress away.
+ */
+describe('plotBadgeFor', () => {
+  const display = (over: Partial<PlotDisplay> = {}): PlotDisplay => ({
+    stage: 2,
+    isRipe: false,
+    readyInMs: 60_000,
+    isPaused: true,
+    soil: 'dry',
+    ...over,
+  });
+
+  it('shows the watering can on a paused crop', () => {
+    const badge = plotBadgeFor(display());
+
+    expect(badge).not.toBeNull();
+    // The can, not a droplet or a warning triangle: the badge's job is "bring
+    // THIS", and it shows the icon already sitting in the player's hotbar.
+    expect(badge).toEqual(ITEMS[THIRSTY_ITEM_ID]!.icon);
+  });
+
+  it('shows nothing while the crop is growing', () => {
+    expect(plotBadgeFor(display({ isPaused: false, soil: 'wet' }))).toBeNull();
+  });
+
+  /**
+   * A ripe crop is never paused — `displayAt` says so — so this can only be
+   * reached by a caller constructing a display by hand. Asserted anyway,
+   * because "READY" and "needs water" on the same tile would be a contradiction
+   * the player has to resolve.
+   */
+  it('shows nothing on a ripe crop', () => {
+    expect(plotBadgeFor(display({ isRipe: true, isPaused: false }))).toBeNull();
+  });
+});
+
+describe('thirstyCount', () => {
+  const NOW = 1_700_000_000_000;
+
+  /** A plot that has been dry since before `NOW`, with a crop part-grown. */
+  const dry = (over: Partial<PlotView> = {}): PlotView => ({
+    ...EMPTY_PLOT,
+    tilled: true,
+    cropId: 'leek',
+    plantedAt: NOW - 60_000,
+    growthDurationMs: CROPS.leek.growthDurationMs,
+    effectiveDurationMs: CROPS.leek.growthDurationMs,
+    readyInMs: CROPS.leek.growthDurationMs,
+    wetUntil: NOW - 1,
+    ...over,
+  });
+
+  it('counts a dry planted plot', () => {
+    expect(thirstyCount([dry()], NOW, NOW)).toBe(1);
+  });
+
+  it('does not count a wet one', () => {
+    expect(thirstyCount([dry({ wetUntil: NOW + 60_000 })], NOW, NOW)).toBe(0);
+  });
+
+  it('does not count bare soil, however dry', () => {
+    expect(thirstyCount([dry({ cropId: null, plantedAt: null })], NOW, NOW)).toBe(0);
+  });
+
+  it('counts nothing on an empty farm', () => {
+    expect(thirstyCount([], NOW, NOW)).toBe(0);
+  });
+
+  /**
+   * The reason this is counted on the CLIENT rather than sent by the server:
+   * "paused" is a function of `wetUntil` and the clock, and the client already
+   * interpolates that forward between polls. A count measured at the poll would
+   * be a whole interval stale at exactly the moment it changes — the moment the
+   * water runs out.
+   */
+  it('turns thirsty as the wet window closes, without a new poll', () => {
+    const view = dry({ wetUntil: NOW + 10_000 });
+
+    expect(thirstyCount([view], NOW, NOW), 'still wet').toBe(0);
+    expect(thirstyCount([view], NOW, NOW + 10_001), 'the same poll, later').toBe(1);
+  });
+});
+
+/**
+ * T-19.01 — the soil edge mask.
+ *
+ * This is what gives a tilled patch a boundary. Before it, soil was a flat
+ * `#be6d47` fill: a hoed plot was a bare terracotta square butted against
+ * grass, and the pack's own soil art could not fix that either — `TILESET_SOIL`
+ * is rounded clod stamps with dark outline pixels along every cell edge, so
+ * tiling it puts eight of them at each 16px junction. That dot grid is the bug
+ * these frames exist to avoid, so the mask is worth pinning precisely.
+ *
+ * The cases below are shapes a player actually makes, in the order they make
+ * them: one plot, then a line, then a corner, then the field.
+ */
+describe('soilMaskAt', () => {
+  /** A tilled set from grid cells, spelled the way the scene spells it. */
+  const tilled = (...cells: readonly (readonly [number, number])[]): ReadonlySet<string> =>
+    new Set(cells.map(([x, y]) => tileKey(x, y)));
+
+  it('gives an isolated plot no neighbours at all', () => {
+    // Mask 0 — the very first plot anyone tills, and precisely the case a
+    // 9-role nine-slice has no art for.
+    expect(soilMaskAt(tilled([5, 5]), 5, 5)).toBe(0);
+  });
+
+  it('reads each direction into its own bit', () => {
+    expect(soilMaskAt(tilled([5, 5], [5, 4]), 5, 5), 'north').toBe(SOIL_N);
+    expect(soilMaskAt(tilled([5, 5], [6, 5]), 5, 5), 'east').toBe(SOIL_E);
+    expect(soilMaskAt(tilled([5, 5], [5, 6]), 5, 5), 'south').toBe(SOIL_S);
+    expect(soilMaskAt(tilled([5, 5], [4, 5]), 5, 5), 'west').toBe(SOIL_W);
+  });
+
+  /**
+   * The bits must not collide, or two different shapes would draw the same
+   * frame. Four powers of two, so any subset is recoverable.
+   */
+  it('uses four distinct bits', () => {
+    expect(new Set([SOIL_N, SOIL_E, SOIL_S, SOIL_W]).size).toBe(4);
+    expect(SOIL_N | SOIL_E | SOIL_S | SOIL_W).toBe(15);
+  });
+
+  it('rims both open sides of a corner', () => {
+    // An L: (5,5) is the elbow, with neighbours east and south.
+    const shape = tilled([5, 5], [6, 5], [5, 6]);
+    expect(soilMaskAt(shape, 5, 5), 'elbow').toBe(SOIL_E | SOIL_S);
+    expect(soilMaskAt(shape, 6, 5), 'the east arm').toBe(SOIL_W);
+    expect(soilMaskAt(shape, 5, 6), 'the south arm').toBe(SOIL_N);
+  });
+
+  it('handles a one-wide row, which has no nine-slice role', () => {
+    const row = tilled([4, 5], [5, 5], [6, 5]);
+    expect(soilMaskAt(row, 4, 5), 'west end').toBe(SOIL_E);
+    expect(soilMaskAt(row, 5, 5), 'middle — open north AND south').toBe(SOIL_E | SOIL_W);
+    expect(soilMaskAt(row, 6, 5), 'east end').toBe(SOIL_W);
+  });
+
+  it('handles a one-wide column the same way', () => {
+    const col = tilled([5, 4], [5, 5], [5, 6]);
+    expect(soilMaskAt(col, 5, 4), 'north end').toBe(SOIL_S);
+    expect(soilMaskAt(col, 5, 5), 'middle — open east AND west').toBe(SOIL_N | SOIL_S);
+    expect(soilMaskAt(col, 5, 6), 'south end').toBe(SOIL_N);
+  });
+
+  /**
+   * The whole field: only the interior is unrimmed. If this said 15 everywhere
+   * the field would have no outline against the grass, which is the flat-fill
+   * behaviour this replaced.
+   */
+  it('rims the border of a filled field and nothing inside it', () => {
+    const field = tilled(
+      ...Array.from({ length: 3 }, (_, x) =>
+        Array.from({ length: 3 }, (_, y) => [x, y] as const),
+      ).flat(),
+    );
+
+    expect(soilMaskAt(field, 1, 1), 'centre').toBe(15);
+    expect(soilMaskAt(field, 0, 0), 'north-west corner').toBe(SOIL_E | SOIL_S);
+    expect(soilMaskAt(field, 2, 2), 'south-east corner').toBe(SOIL_N | SOIL_W);
+    expect(soilMaskAt(field, 1, 0), 'north edge').toBe(SOIL_E | SOIL_S | SOIL_W);
+    expect(soilMaskAt(field, 0, 1), 'west edge').toBe(SOIL_N | SOIL_E | SOIL_S);
+  });
+
+  /**
+   * The one the scene has to get right when it builds the set. A locked plot is
+   * not tilled and must be absent, or the field would run past the edge of what
+   * the player owns with no boundary drawn.
+   */
+  it('rims against a neighbour that is absent from the set', () => {
+    // (6,5) is a locked plot, so the scene never adds it. From (5,5) that edge
+    // must read exactly like grass.
+    expect(soilMaskAt(tilled([5, 5]), 5, 5)).toBe(soilMaskAt(tilled([5, 5], [7, 5]), 5, 5));
+  });
+
+  /** Diagonals are not neighbours — the sheet has no inner-corner art. */
+  it('ignores diagonals', () => {
+    expect(soilMaskAt(tilled([5, 5], [6, 6], [4, 4], [6, 4], [4, 6]), 5, 5)).toBe(0);
+  });
+});
+
+describe('soilFrame', () => {
+  it('has no frame for untilled ground', () => {
+    // The caller hides the sprite and the map's own ground shows through —
+    // which since the re-scope is the ORANGE tillable fill, so an un-hoed plot
+    // still reads as a field rather than as grass.
+    expect(soilFrame(0, 'untilled')).toBeNull();
+    expect(soilFrame(15, 'untilled')).toBeNull();
+  });
+
+  /**
+   * Thirty-two distinct frames — sixteen masks in each of two states — and all
+   * of them the pack's own art since the re-scope. They used to be cropped out
+   * of a generated strip.
+   */
+  it('gives one distinct frame per mask per state', () => {
+    const frames = new Set<number>();
+    for (const soil of ['dry', 'wet'] as const) {
+      for (let mask = 0; mask < 16; mask++) frames.add(soilFrame(mask, soil)!);
+    }
+    expect(frames.size).toBe(32);
+  });
+
+  it('answers for every mask, with no gaps', () => {
+    for (const soil of ['dry', 'wet'] as const) {
+      for (let mask = 0; mask < 16; mask++) {
+        expect(soilFrame(mask, soil), `${soil} mask ${mask}`).toEqual(expect.any(Number));
+      }
+    }
+  });
+
+  /**
+   * Wetness changes the frame, never the mask. A watered plot inside a dry
+   * field must be a colour change with NO rim around it — the soil is
+   * continuous even though the wetness is not — or every lapsing water window
+   * would visibly chop the field into fenced-off patches.
+   *
+   * Asserted as the RELATIONSHIP the layout guarantees: the wet set is the dry
+   * set twelve columns right, so every pair differs by exactly 12. That
+   * survives a re-measurement in a way `'wet-15'` never could.
+   */
+  it('keeps the mask when only the wetness differs', () => {
+    for (let mask = 0; mask < 16; mask++) {
+      expect(soilFrame(mask, 'wet')! - soilFrame(mask, 'dry')!, `mask ${mask}`).toBe(12);
+    }
+  });
+
+  /**
+   * Every frame must be inside the sheet. A number out of range renders as a
+   * blank tile rather than throwing, which is exactly the silent failure the
+   * measurement discipline exists to prevent.
+   */
+  it('stays inside TILESET_SOIL', () => {
+    const last = TILESET_SOIL.cols * TILESET_SOIL.rows - 1;
+    for (const soil of ['dry', 'wet'] as const) {
+      for (let mask = 0; mask < 16; mask++) {
+        const frame = soilFrame(mask, soil)!;
+        expect(frame, `${soil} mask ${mask}`).toBeGreaterThanOrEqual(0);
+        expect(frame, `${soil} mask ${mask}`).toBeLessThanOrEqual(last);
+      }
+    }
+  });
 });

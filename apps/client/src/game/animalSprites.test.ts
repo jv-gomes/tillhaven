@@ -5,6 +5,8 @@ import {
   ANIMAL_CHICKEN_BABY_HATCH_ROW,
   ANIMAL_CHICKEN_BABY_SHEETS,
   ANIMAL_CHICKEN_IDLE_ROW,
+  ANIMAL_CHICKEN_POSE_ROWS,
+  ANIMAL_CHICKEN_RED,
   ANIMAL_CHICKEN_SHEETS,
   ANIMAL_COW_FEMALE_BROWN,
   ANIMAL_COW_IDLE_ROW,
@@ -17,18 +19,36 @@ import {
 } from '@tillhaven/shared/config';
 import type { AnimalView } from '@tillhaven/shared/types';
 import {
+  ANIMAL_FACINGS,
+  ANIMAL_POSES,
   BABY_SHEET,
   VARIANT_SHEET,
+  animationRowsFor,
   badgeFor,
   idleFrameFor,
   idleRowFor,
+  poseRowFor,
   sheetFor,
+  type AnimalPose,
 } from './animalSprites.js';
+import type { Direction } from './entities/movement.js';
 
 /**
  * The two rules T-2.06 is about: a chick becoming an adult, and a player being
  * able to read an animal's state without pointing at it.
  */
+
+/** Every pose `wanderPose` can return. Kept beside `AnimalPose` deliberately. */
+const ALL_POSES: readonly AnimalPose[] = [
+  'idle',
+  'idleAlt',
+  'idleAlt2',
+  'walk',
+  'peck',
+  'peckDeep',
+  'nest',
+  'lying',
+];
 
 const T0 = 1_700_000_000_000;
 
@@ -253,5 +273,185 @@ describe('badgeFor', () => {
 
   it('returns null rather than throwing for a kind that is no longer in config', () => {
     expect(badgeFor(view({ kind: 'griffin' as AnimalKind }))).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * poseRowFor (T-15.11)
+ * ------------------------------------------------------------------ */
+
+describe('poseRowFor', () => {
+  const cow = ANIMAL_COW_FEMALE_BROWN;
+  const hen = ANIMAL_CHICKEN_RED;
+  const facings: Direction[] = ['down', 'up', 'left', 'right'];
+  // Every pose the wander can produce (T-16.05 widened this from four).
+  const poses: AnimalPose[] = [...ALL_POSES];
+
+  it('never names a row outside its own sheet', () => {
+    // The cheapest guard there is, and the one that catches a typo'd constant
+    // before it becomes an invisible sprite.
+    for (const sheet of [cow, hen]) {
+      for (const pose of poses) {
+        for (const facing of facings) {
+          const { row } = poseRowFor(sheet, pose, facing);
+          expect(row, `${sheet.key} ${pose} ${facing}`).toBeGreaterThanOrEqual(0);
+          expect(row, `${sheet.key} ${pose} ${facing}`).toBeLessThan(sheet.rows);
+        }
+      }
+    }
+  });
+
+  /*
+   * D-10, in the one place it changes behaviour.
+   *
+   * The chicken sheet has no front or back view — measured in T-15.10 — so a
+   * chicken facing up must not get a different row from one facing down. If a
+   * future change wires `ANIMAL_CHICKEN_FACING_ROWS` to something real, this is
+   * the test that says so.
+   */
+  it('gives a chicken the same row whichever way it faces', () => {
+    const rows = facings.map((f) => poseRowFor(hen, 'idle', f).row);
+    expect(new Set(rows).size).toBe(1);
+  });
+
+  it('flips a chicken to face right, and only right', () => {
+    expect(poseRowFor(hen, 'idle', 'right').flipX).toBe(true);
+    expect(poseRowFor(hen, 'idle', 'left').flipX).toBe(false);
+    expect(poseRowFor(hen, 'idle', 'up').flipX).toBe(false);
+    expect(poseRowFor(hen, 'idle', 'down').flipX).toBe(false);
+  });
+
+  it('gives a cow a genuinely different row per facing', () => {
+    // Unlike the chicken: the cow sheet's rows 1 and 2 measured 13px wide
+    // against row 0's 22px, which is what a head-on and a tail-on view look
+    // like next to a side view.
+    const side = poseRowFor(cow, 'walk', 'left').row;
+    const front = poseRowFor(cow, 'walk', 'down').row;
+    const back = poseRowFor(cow, 'walk', 'up').row;
+    expect(new Set([side, front, back]).size).toBe(3);
+  });
+
+  it('never flips a cow that is facing the camera or away from it', () => {
+    // Front and back views are their own rows, so flipping one mirrors a cow
+    // that has no left or right to mirror.
+    expect(poseRowFor(cow, 'walk', 'down').flipX).toBe(false);
+    expect(poseRowFor(cow, 'walk', 'up').flipX).toBe(false);
+    expect(poseRowFor(cow, 'walk', 'right').flipX).toBe(true);
+  });
+
+  it('draws a lying animal from a different row than a standing one', () => {
+    for (const sheet of [cow, hen]) {
+      expect(poseRowFor(sheet, 'lying', 'left').row).not.toBe(
+        poseRowFor(sheet, 'idle', 'left').row,
+      );
+    }
+  });
+
+  it('gives a chicken a pecking row but a cow none of its own', () => {
+    // The cow sheet has no peck pose; asking for one falls back to its walk
+    // row rather than to an arbitrary lying pose.
+    expect(poseRowFor(hen, 'peck', 'left').row).not.toBe(poseRowFor(hen, 'idle', 'left').row);
+    expect(poseRowFor(cow, 'peck', 'left').row).toBe(poseRowFor(cow, 'walk', 'left').row);
+  });
+
+  it('is what idleRowFor now answers with', () => {
+    for (const sheet of [cow, hen]) {
+      expect(idleRowFor(sheet)).toBe(poseRowFor(sheet, 'idle', 'left').row);
+    }
+  });
+
+  /**
+   * T-16.05, found in a browser and not by any test that existed.
+   *
+   * A chick sheet has the adult's 4x7 GEOMETRY and different row SEMANTICS:
+   * `ANIMAL_CHICKEN_POSE_ROWS.peckDeep` is row 4, and row 4 of a chick sheet is
+   * `ANIMAL_CHICKEN_BABY_HATCH_ROW` — an egg. The first version of the chicken
+   * routine drove the chick sheet through the adult's rows, so every baby
+   * chicken in the coop periodically turned back into an egg. Nothing caught it
+   * because every geometric invariant still held: row 4 exists, it is in range,
+   * and it animates.
+   *
+   * Only row 4 of the chick sheet was ever measured, so every other row is a
+   * guess and chicks hold their idle row instead.
+   */
+  it('never draws a chick as anything but its idle row', () => {
+    for (const sheet of ANIMAL_CHICKEN_BABY_SHEETS) {
+      for (const pose of ALL_POSES) {
+        for (const facing of ['down', 'up', 'left', 'right'] as const) {
+          const { row } = poseRowFor(sheet, pose, facing);
+          expect(row, `chick ${sheet.key} drew row ${row} for ${pose}`).toBe(
+            ANIMAL_CHICKEN_POSE_ROWS.idle,
+          );
+          expect(row, 'a chick must never be drawn as an egg').not.toBe(
+            ANIMAL_CHICKEN_BABY_HATCH_ROW,
+          );
+        }
+      }
+    }
+  });
+
+  /** The adult sheet is the one with a routine, and it must reach every row. */
+  it('an adult hen can reach every measured row of its sheet', () => {
+    const reached = new Set<number>();
+    for (const pose of ALL_POSES) reached.add(poseRowFor(hen, pose, 'left').row);
+
+    for (const [name, row] of Object.entries(ANIMAL_CHICKEN_POSE_ROWS)) {
+      // `walk` has no row of its own (D-15), so idleAlt/idleAlt2 etc. are the
+      // ones that must be reachable — all seven measured rows are named here.
+      expect(reached.has(row), `nothing ever selects the ${name} row`).toBe(true);
+    }
+  });
+});
+
+/**
+ * The set of animations `registerAnimalAnimations` creates (T-15.29).
+ *
+ * Lifted out of `Animal.ts` precisely so it could be asserted: the scene needs
+ * Phaser and Phaser needs a DOM, so nothing inside it is reachable from these
+ * tests. The failure being guarded is silent — `anims.play` on a key that was
+ * never created does not throw, it simply leaves the sprite on whatever frame
+ * it was already showing.
+ */
+describe('animationRowsFor', () => {
+  it('covers every (row, playback) the wander can ask for', () => {
+    for (const sheet of ANIMAL_SHEETS) {
+      const registered = new Set(
+        animationRowsFor(sheet).map(({ row, play }) => `${row}:${play}`),
+      );
+      for (const pose of ANIMAL_POSES) {
+        for (const facing of ANIMAL_FACINGS) {
+          const { row, play } = poseRowFor(sheet, pose, facing);
+          expect(
+            registered.has(`${row}:${play}`),
+            `${sheet.key}: ${pose}/${facing} wants row ${row} as ${play}, never registered`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  /**
+   * Reduced motion forces `hold` onto whichever row `idle` resolves to,
+   * regardless of the playback that pose normally asks for — a chicken's idle
+   * row is only ever requested as a `loop`. Without this, the preference would
+   * freeze exactly the players who set it onto a single stale frame, and only
+   * them.
+   */
+  it('registers a held variant of every row, whether or not a pose asks for one', () => {
+    for (const sheet of ANIMAL_SHEETS) {
+      const rows = animationRowsFor(sheet);
+      const held = new Set(rows.filter((r) => r.play === 'hold').map((r) => r.row));
+      for (const { row } of rows) {
+        expect(held.has(row), `${sheet.key}: row ${row} has no held variant`).toBe(true);
+      }
+    }
+  });
+
+  it('deduplicates rows several poses collapse onto', () => {
+    for (const sheet of ANIMAL_SHEETS) {
+      const rows = animationRowsFor(sheet);
+      const keys = rows.map(({ row, play }) => `${row}:${play}`);
+      expect(new Set(keys).size, `${sheet.key} has duplicate animation keys`).toBe(keys.length);
+    }
   });
 });

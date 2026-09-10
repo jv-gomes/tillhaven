@@ -3,7 +3,17 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
-import { ErrorCode, FURNITURE, FURNITURE_IDS, INTERIOR_ROOM, getFurniture } from '@tillhaven/shared';
+import {
+  ErrorCode,
+  FURNITURE,
+  FURNITURE_IDS,
+  FURNITURE_SHEETS,
+  IMAGES,
+  INTERIOR_ROOM,
+  STARTING_FURNITURE,
+  getFurniture,
+} from '@tillhaven/shared';
+import { SPAWN_CELL } from './reachability.js';
 import { db, schema, closeDb } from '../../db/client.js';
 import { resetDb } from '../../test/helpers.js';
 import { createTestClient, registerTestUser, newKey, type TestClient } from '../../test/app.js';
@@ -29,6 +39,19 @@ beforeEach(async () => {
   await db.insert(schema.furnitureOwned).values(
     FURNITURE_IDS.map((furnitureId) => ({ playerId, furnitureId, quantity: 10 })),
   );
+
+  /*
+   * Clear the starter furnishing (T-18.25).
+   *
+   * Registration now places `STARTING_FURNITURE`, and every test below reasons
+   * about a room whose contents it put there — "refuses a piece landing on one
+   * already there" means nothing if four other pieces are also in the way.
+   * Emptying here keeps each test's subject the rule it is testing; the starter
+   * layout is validated on its own terms in `reachability.test.ts`.
+   */
+  await db
+    .delete(schema.furniturePlacements)
+    .where(eq(schema.furniturePlacements.playerId, playerId));
 });
 
 afterAll(closeDb);
@@ -45,6 +68,22 @@ function remove(placementId: string) {
   return client.post('/api/house/remove', { placementId, idempotencyKey: newKey() });
 }
 
+/**
+ * A cell at the far corner of the room that this piece still FITS in.
+ *
+ * Derived rather than written down, because the room's size is derived too
+ * (T-16.13, D-17): it comes from the authored interior map, so any hardcoded
+ * cell is really an assertion about the map's dimensions dressed up as an
+ * assertion about placement.
+ */
+function farCell(furnitureId: string): { x: number; y: number } {
+  const def = FURNITURE[furnitureId]!;
+  return {
+    x: INTERIOR_ROOM.width - def.footprint.width,
+    y: INTERIOR_ROOM.height - def.footprint.height,
+  };
+}
+
 async function placements() {
   return db
     .select()
@@ -53,7 +92,7 @@ async function placements() {
 }
 
 describe('GET /api/house', () => {
-  it('starts empty, and reports the room size', async () => {
+  it('reports the room size, and an empty room once cleared', async () => {
     const res = await client.get('/api/house');
 
     expect(res.status).toBe(200);
@@ -64,13 +103,38 @@ describe('GET /api/house', () => {
     });
   });
 
+  /**
+   * A brand-new account walks into a furnished room (T-18.25). Asserted
+   * against a client whose `beforeEach` cleanup has NOT run, because the
+   * cleanup above is what every other test in this file needs and this is the
+   * one test that needs the opposite.
+   */
+  it('starts a new account with the starter furnishing already placed', async () => {
+    const fresh = await createTestClient();
+    await registerTestUser(fresh);
+
+    const res = await fresh.get('/api/house');
+
+    expect(res.status).toBe(200);
+    expect(res.body.placements).toHaveLength(STARTING_FURNITURE.length);
+    expect(res.body.placements.map((p: { furnitureId: string }) => p.furnitureId).sort()).toEqual(
+      STARTING_FURNITURE.map((p) => p.furnitureId).sort(),
+    );
+    await fresh.close();
+  });
+
   it('never shows another player’s house', async () => {
     await place('clock', 0, 0);
 
     const other = await createTestClient();
     await registerTestUser(other);
 
-    expect((await other.get('/api/house')).body.placements).toEqual([]);
+    // The other account has its OWN starter room (T-18.25) — the point is that
+    // it does not contain this player's clock.
+    const theirs = (await other.get('/api/house')).body.placements as { furnitureId: string }[];
+    expect(theirs).toHaveLength(STARTING_FURNITURE.length);
+    expect(theirs.some((p) => p.furnitureId === 'clock')).toBe(false);
+
     expect((await client.get('/api/house')).body.placements).toHaveLength(1);
     await other.close();
   });
@@ -96,6 +160,59 @@ describe('POST /api/house/place', () => {
 
     expect(res.code).toBe(ErrorCode.UNKNOWN_ITEM);
     expect(await placements()).toHaveLength(0);
+  });
+
+  /* ---- reachability (T-18.08) ---- */
+
+  /**
+   * Furniture is SOLID since T-18.08, so a placement can now cost the player
+   * something permanent: the doorway is where they materialise and the only
+   * cell the door can be faced from, and there is no in-game way to remove a
+   * piece you cannot walk up to.
+   *
+   * Asserted through the endpoint and not only in `reachability.test.ts`,
+   * because the guard being *wired in* is the half that would break silently —
+   * a pure function nobody calls refuses nothing.
+   */
+  it('refuses a piece that stands in the doorway', async () => {
+    const res = await place('stool', SPAWN_CELL.x, SPAWN_CELL.y);
+
+    expect(res.code).toBe(ErrorCode.FURNITURE_BLOCKS_ROOM);
+    expect(await placements()).toHaveLength(0);
+  });
+
+  it('refuses a piece that boxes another one into a corner', async () => {
+    expect((await place('stool', 0, 0)).status).toBe(200);
+    expect((await place('stool', 1, 0)).status).toBe(200);
+
+    // The third seals the first in: (0,0)'s only free neighbours were (1,0)
+    // and (0,1).
+    const res = await place('stool', 0, 1);
+
+    expect(res.code).toBe(ErrorCode.FURNITURE_BLOCKS_ROOM);
+    expect(await placements()).toHaveLength(2);
+  });
+
+  /**
+   * The rug is walked over, so it can never cut anything off — including when
+   * it is laid across the doorway, which is what a doormat is.
+   */
+  it('lets a flat piece go anywhere, doorway included', async () => {
+    const res = await place('rug', SPAWN_CELL.x, SPAWN_CELL.y);
+
+    expect(res.status, res.code).toBe(200);
+    expect(await placements()).toHaveLength(1);
+  });
+
+  /** A move is a placement too, and can seal exactly the same way. */
+  it('refuses a MOVE that would stand in the doorway', async () => {
+    const placed = await place('stool', 0, 0);
+    const id = placed.body.id as string;
+
+    const res = await move(id, SPAWN_CELL.x, SPAWN_CELL.y);
+
+    expect(res.code).toBe(ErrorCode.FURNITURE_BLOCKS_ROOM);
+    expect((await placements())[0]).toMatchObject({ x: 0, y: 0 });
   });
 
   /* ---- position ---- */
@@ -180,8 +297,31 @@ describe('POST /api/house/place', () => {
     expect(await placements()).toHaveLength(2);
   });
 
-  it('cannot be raced into stacking two pieces on one cell', async () => {
-    const results = await Promise.all([place('clock', 4, 4), place('clock', 4, 4)]);
+  /**
+   * T-18.28 — the placement race, as far as it can honestly be tested here.
+   *
+   * **This does not fail on the broken code, and it is kept anyway with that
+   * said out loud.** `lockPlacements` uses `SELECT … FOR UPDATE`, which locks
+   * only the rows it RETURNS — an empty room returns none — so two overlapping
+   * placements can both read "that cell is free" and both insert. The
+   * two-request version of this test caught exactly that twice in about six
+   * full-suite runs, failing with *both* requests returning 200.
+   *
+   * Eight requests did not make it reliable, and neither did forcing the
+   * interleaving with two held transactions: with the fix REMOVED, both
+   * variants still passed. Whatever serialises these in practice is not
+   * something this layer can control, so there is no regression test here that
+   * would go red if `lockRoom` were deleted — and a test that cannot fail is
+   * not evidence (see any "How it turned out" entry in this file).
+   *
+   * What remains is a smoke test that concurrent placements do not stack, plus
+   * the write-up's honest note that the fix rests on inspection and on two
+   * observed failures rather than on a red test.
+   */
+  it('does not stack pieces when placements are fired concurrently', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => place('clock', 4, 4)),
+    );
 
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
     expect(await placements()).toHaveLength(1);
@@ -200,14 +340,22 @@ describe('POST /api/house/place', () => {
 });
 
 describe('POST /api/house/move', () => {
+  /**
+   * The destination is DERIVED, not written down. It was a hardcoded (5,5),
+   * which fitted the 10x8 room T-3.05 invented and stopped fitting the moment
+   * T-16.13 derived the room from the authored map (12x6) — a 1x2 clock at row
+   * 5 wants row 6, and there is no row 6. The test was asserting the room's old
+   * dimensions while claiming to assert that moving works.
+   */
   it('moves a piece', async () => {
     const placed = (await place('clock', 0, 0)).body;
+    const to = farCell('clock');
 
-    const res = await move(placed.id, 5, 5);
+    const res = await move(placed.id, to.x, to.y);
 
     expect(res.status, res.code).toBe(200);
-    expect(res.body).toMatchObject({ x: 5, y: 5 });
-    expect((await placements())[0]).toMatchObject({ x: 5, y: 5 });
+    expect(res.body).toMatchObject(to);
+    expect((await placements())[0]).toMatchObject(to);
   });
 
   /** Nudging one cell must not collide with where the piece already is. */
@@ -222,9 +370,10 @@ describe('POST /api/house/move', () => {
 
   it('refuses a move onto another piece, leaving it where it was', async () => {
     const clock = (await place('clock', 0, 0)).body;
-    await place('picture', 5, 5);
+    const to = farCell('clock');
+    await place('picture', to.x, to.y);
 
-    const res = await move(clock.id, 5, 5);
+    const res = await move(clock.id, to.x, to.y);
 
     expect(res.code).toBe(ErrorCode.PLOT_OCCUPIED);
     expect((await placements()).find((p) => p.id === clock.id)).toMatchObject({ x: 0, y: 0 });
@@ -309,13 +458,41 @@ describe('POST /api/house/remove', () => {
 });
 
 describe('the catalogue', () => {
-  it('crops every piece from inside the sheet', () => {
+  /**
+   * T-16.08 gave this test teeth it did not have. It used to compare every crop
+   * against one hardcoded 192x144 — the dimensions of a sheet that had already
+   * been deleted — so it passed while every piece pointed at an arbitrary slice
+   * of a house exterior. Each piece now carries its own kit, and the bound is
+   * that kit's real size, which is the check that would have failed then.
+   */
+  it('crops every piece from inside its own sheet', () => {
     for (const id of Object.keys(FURNITURE)) {
       const def = FURNITURE[id]!;
       expect(def.crop.width, id).toBeGreaterThan(0);
       expect(def.crop.height, id).toBeGreaterThan(0);
-      expect(def.crop.x + def.crop.width, id).toBeLessThanOrEqual(192);
-      expect(def.crop.y + def.crop.height, id).toBeLessThanOrEqual(144);
+      expect(def.crop.x, id).toBeGreaterThanOrEqual(0);
+      expect(def.crop.y, id).toBeGreaterThanOrEqual(0);
+      expect(def.crop.x + def.crop.width, `${id} overruns ${def.sheet.key}`).toBeLessThanOrEqual(
+        def.sheet.width,
+      );
+      expect(def.crop.y + def.crop.height, `${id} overruns ${def.sheet.key}`).toBeLessThanOrEqual(
+        def.sheet.height,
+      );
+    }
+  });
+
+  /** Every kit a piece names has to be one the client actually loads. */
+  it('draws every piece from a registered image', () => {
+    const registered = new Set(IMAGES.map((i) => i.key));
+    for (const id of Object.keys(FURNITURE)) {
+      const def = FURNITURE[id]!;
+      expect(registered.has(def.sheet.key), `${id} names unregistered sheet ${def.sheet.key}`).toBe(
+        true,
+      );
+    }
+    // And nothing is registered for the catalogue that no piece uses.
+    for (const sheet of FURNITURE_SHEETS) {
+      expect(registered.has(sheet.key), `${sheet.key} is not in IMAGES`).toBe(true);
     }
   });
 
@@ -558,8 +735,21 @@ describe('furniture grants nothing', () => {
     const allowed = new Set([
       'id',
       'name',
+      // T-16.08: which kit the piece is cropped out of. Art, not a benefit —
+      // and admitted to this list deliberately rather than by the test being
+      // relaxed, which is the only way this guard stays worth having.
+      'sheet',
       'crop',
       'footprint',
+      /*
+       * T-18.08: whether the piece is paint on the floor (the rug) or an object
+       * standing on it (everything else). Admitted for the same reason `sheet`
+       * was — it decides how the piece is DRAWN and whether it is walked over,
+       * not what its owner gets. Neither value grants anything: an upright
+       * piece is solid and a flat one is not, and no benefit calculation
+       * anywhere reads either.
+       */
+      'flat',
       'price',
       'tradeable',
       'vipOnly',

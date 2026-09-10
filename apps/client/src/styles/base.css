@@ -16,10 +16,31 @@
   --paper-sunk: #e6d2b5;
   --paper-raised: #fbf1e2;
 
-  /* Ink */
+  /*
+   * Ink.
+   *
+   * `--ink-faint` was #9a7a63 until T-27.01, where an axe audit measured it at
+   * **3.12:1 on `--paper`** — below WCAG AA's 4.5:1 for body text, on 26
+   * elements of the landing page and all three hints on the register form. It
+   * is the token every "secondary" line uses, so it failed in exactly the
+   * places a reader is least able to guess the missing words: crop stats, field
+   * hints, timing notes.
+   *
+   * #6f5847 is the same hue darkened until it passes on **all three** paper
+   * tones — 5.27 on `--paper`, 5.94 on `--paper-raised`, 4.51 on
+   * `--paper-sunk`. The third one is the reason it is this dark rather than
+   * #7a614f: axe never flagged it, because no page it audited happened to put
+   * faint ink on a sunk panel, but `--paper-sunk` is a real background in four
+   * stylesheets and the pairing is one layout change away. A token that is
+   * only safe on the backgrounds it currently meets is a trap for whoever
+   * writes the fifth.
+   *
+   * It is still visibly quieter than `--ink-soft`, which is the whole job of
+   * the token. `styles/contrast.test.ts` pins every ratio.
+   */
   --ink: #2a1018;
   --ink-soft: #6d4738;
-  --ink-faint: #9a7a63;
+  --ink-faint: #6f5847;
 
   /* Sampled from the spritesheets */
   --soil: #ee9d51;
@@ -59,7 +80,9 @@
     --paper-raised: #123040;
     --ink: #f2e3ce;
     --ink-soft: #b59d84;
-    --ink-faint: #7d6a58;
+    /* Same fix, opposite direction: #7d6a58 measured 3.28:1 on the dark
+       `--paper`. Lightened until it passes (5.51 / 4.50 on raised). */
+    --ink-faint: #9f9183;
     --line: #2f5567;
     --shadow-hard: 5px 5px 0 #02131b;
     --shadow-hard-sm: 3px 3px 0 #02131b;

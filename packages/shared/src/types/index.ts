@@ -1,7 +1,10 @@
 import type { CropId } from '../config/crops.js';
 import type { AnimalKind, AnimalVariant } from '../config/animals.js';
+import type { TreeView } from '../config/trees.js';
 import type { IdleTask } from '../config/idle.js';
+import type { LevelProgress } from '../config/level.js';
 import type { Appearance } from '../schemas/index.js';
+import type { EnergyState } from '../config/energy.js';
 
 /**
  * Shared domain types. Defined ONCE here and imported by both client and
@@ -24,12 +27,70 @@ export interface PublicPlayer {
   readonly isVip: boolean;
 }
 
+/**
+ * Why a player may not trade yet (§6, and the decision in §14).
+ *
+ * **A wire shape since T-22.03, not just a server detail.** It lived in
+ * `modules/trade/eligibility.ts` and only its `eligible` boolean ever reached
+ * the client — as `SelfPlayer.canTrade`, which nothing on the client read. So a
+ * new player walked to the trade post, typed a name, pressed Invite and got a
+ * refusal with no way to know they were on a 24-hour timer.
+ *
+ * The server still DECIDES (§4.1) — `flaggedAt` never leaves it, and both
+ * gates are re-checked at invite and at execution. This is the reason, for
+ * display, in exactly the way `PlotView.readyInMs` is.
+ */
+export const TradeBlock = {
+  FLAGGED: 'flagged',
+  ACCOUNT_TOO_NEW: 'account_too_new',
+  FARM_TOO_LOW: 'farm_too_low',
+} as const;
+export type TradeBlock = (typeof TradeBlock)[keyof typeof TradeBlock];
+
+export interface TradeEligibility {
+  readonly eligible: boolean;
+  /** Why not, or null when they may trade. */
+  readonly blockedBy: TradeBlock | null;
+  /** ms until the account is old enough. 0 once it is. */
+  readonly accountAgeRemainingMs: number;
+  readonly farmLevel: number;
+  readonly requiredFarmLevel: number;
+}
+
 /** Only ever sent to the owning player. */
 export interface SelfPlayer extends PublicPlayer {
   readonly email: string;
   readonly gold: number;
   readonly vipUntil: number | null;
-  readonly canTrade: boolean;
+  /**
+   * Whether this player may trade, and why not. Replaced a bare `canTrade`
+   * boolean in T-22.03 — see `TradeEligibility`.
+   */
+  readonly trade: TradeEligibility;
+  /**
+   * Everything a progress bar needs, derived from `players.experience`
+   * (T-30.01).
+   *
+   * The server has computed level since T-2.09 and returned `experience` and
+   * `farmLevel` on every harvest since — and the client threw all of it away,
+   * so a player could reach the trade gate without ever seeing a number move.
+   * This is the same derivation those responses already use, hoisted onto the
+   * one shape the client polls, so progress is legible without an extra
+   * request.
+   *
+   * Derived, never stored (§4.2). `progress.level` and the inherited
+   * `farmLevel` come from the same function and cannot disagree; a test pins
+   * that rather than trusting it.
+   */
+  readonly progress: LevelProgress;
+  /**
+   * Energy, derived on read (MVP re-scope).
+   *
+   * Sent whole rather than as `energySpent` so the client never has to know
+   * the cap formula — and so a sleeping player's bar can be interpolated from
+   * `fullInMs` between polls without a second round trip.
+   */
+  readonly energy: EnergyState;
   /** Null until the player finishes the first-login character creator (T-8.02). */
   readonly appearance: Appearance | null;
 }
@@ -151,7 +212,16 @@ export interface IdleSettings {
  */
 export interface IdleNextAction {
   readonly kind: IdleTask;
-  readonly plotId: string;
+  /**
+   * Where the farmer is heading. Exactly one of these is present: `chop`
+   * addresses a tree, every other task a plot (T-20.06).
+   *
+   * Both optional rather than a union, because the client's only use for either
+   * is "walk here and play the swing" — it reads whichever it was given and
+   * does not care which kind of thing it is.
+   */
+  readonly plotId?: string;
+  readonly treeId?: string;
   readonly at: number;
 }
 
@@ -219,6 +289,14 @@ export interface FarmState {
   readonly farm: Farm;
   readonly plots: readonly PlotView[];
   readonly animals: readonly AnimalView[];
+  /**
+   * The farm's trees and whether each is standing (T-20.01).
+   *
+   * `TreeView` is declared in `config/trees.ts` beside `treeStateAt`, which
+   * computes it — the view and the rule that fills it belong together, and
+   * both sides import the one definition (§10).
+   */
+  readonly trees: readonly TreeView[];
   readonly player: SelfPlayer;
   /**
    * Gold the shipping box paid out while serving THIS request (T-11.03).
@@ -255,8 +333,22 @@ export interface InteriorRoom {
  * Inventory
  * ------------------------------------------------------------------ */
 
+/**
+ * One occupied slot in a container, as the API returns it.
+ *
+ * **The field is `slotIndex`, and it used to be `index` here** (T-18.26). The
+ * server selects `slotIndex` and the client's `net/inventory.ts` declared
+ * `slotIndex`; this declaration said `index` and **nothing imported it**, so
+ * the copy that was wrong was also the copy that was never exercised. Same
+ * shape of defect as the trade contract in T-18.21, on a smaller blast radius
+ * only because nobody had reached for it yet — §10 exists precisely so a type
+ * cannot be right in two places and wrong in a third.
+ *
+ * Both sides import this now. `SlotContents` on the server and
+ * `InventorySlot` on the client are re-exports of it.
+ */
 export interface InventorySlot {
-  readonly index: number;
+  readonly slotIndex: number;
   readonly itemId: string;
   readonly quantity: number;
 }
@@ -270,6 +362,19 @@ export interface Inventory {
  * Trade
  * ------------------------------------------------------------------ */
 
+/**
+ * Every state a trade can be in, and the ONLY spelling of them.
+ *
+ * **It was declared four times and one copy disagreed** (T-18.21). This one,
+ * `apps/server/src/modules/trade/lifecycle.ts` and the database column all say
+ * `'pending' | 'open' | …`; `apps/client/src/net/trade.ts` said
+ * `'PENDING' | 'ACTIVE' | …`, and `tradePanel.ts` compared `status === 'ACTIVE'`
+ * and `case 'PENDING'` against a server that sends `'open'` and `'pending'`.
+ * **Not one of those comparisons could ever be true.** The panel has no
+ * importer, so nothing ran and nothing noticed — which is exactly the invisible
+ * drift BUG-17 predicted, on the system §6 calls the highest-risk in the
+ * project. Nothing imported THIS declaration at all.
+ */
 export const TradeStatus = {
   PENDING: 'pending',
   OPEN: 'open',
@@ -293,19 +398,40 @@ export interface TradeSide {
   readonly confirmed: boolean;
 }
 
-export interface Trade {
+/**
+ * A trade as the API returns it, from the asking player's point of view.
+ *
+ * **The wire shape, defined once** (§10). It was written out by hand in
+ * `apps/server/src/modules/trade/service.ts` and again in
+ * `apps/client/src/net/trade.ts`; two hand-kept copies of a contract is how the
+ * status drift above happened, and moving it here makes the next divergence a
+ * compile error instead of a runtime nothing.
+ *
+ * `you`/`them` rather than initiator/recipient: every screen a player sees is
+ * about their own side and the other one, and resolving that server-side means
+ * the client never has to work out which of two ids is itself.
+ */
+export interface TradeView {
   readonly id: string;
   readonly status: TradeStatus;
-  readonly initiator: TradeSide;
-  readonly recipient: TradeSide;
-  readonly createdAt: number;
-  readonly updatedAt: number;
+  readonly initiatorId: string;
+  readonly recipientId: string;
+  readonly initiatorName: string;
+  readonly recipientName: string;
   /**
    * Bumped on every offer mutation. Confirmations carry the revision they were
    * made against; a mismatch means the offer changed and both confirmations
    * reset (CLAUDE.md §6).
    */
   readonly revision: number;
+  readonly expiresInMs: number;
+  /** Whether the caller is the one who opened it. */
+  readonly isInitiator: boolean;
+  /** The caller's own side, and the other party's. */
+  readonly you: TradeSide;
+  readonly them: TradeSide;
+  /** Both sides confirmed at the current revision. */
+  readonly readyToExecute: boolean;
 }
 
 /** Immutable record written on every completed trade. Never updated or deleted. */

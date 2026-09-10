@@ -42,6 +42,8 @@ beforeEach(async () => {
     // Deliberately stale from here on: nothing in the purchase may trust it.
     backpackTier: 0,
     experience: 0,
+    energySpent: 0,
+    sleepingSince: null,
     vipUntil: null,
     flaggedAt: null,
     createdAt: Date.now(),

@@ -18,6 +18,19 @@ const TILEMAP_DIR = resolve(CLIENT_PUBLIC, 'tilemaps');
 /** Calibration data lives in source, not in public — it is editor input. */
 const TERRAIN_FILE = resolve(__dirname, 'src/tilesets/terrain-sets.json');
 
+/**
+ * The authored animation library.
+ *
+ * In `packages/shared`, not here, because unlike terrain calibration this is
+ * read by the GAME as well as the editor: the Farm scene resolves an `animId`
+ * out of it. Editor-only data may live in the editor; anything both sides read
+ * is shared config (CLAUDE.md §4.4).
+ */
+const GROUND_ANIM_FILE = resolve(
+  __dirname,
+  '../../packages/shared/src/config/groundAnim.generated.ts',
+);
+
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -48,6 +61,145 @@ async function writeAtomic(target: string, contents: string): Promise<void> {
   const tmp = `${target}.tmp-${process.pid}`;
   await writeFile(tmp, contents, 'utf8');
   await rename(tmp, target);
+}
+
+/**
+ * Turns a posted animation library into the generated TypeScript file.
+ *
+ * **The endpoint writes code, so it validates rather than trusts.** Every field
+ * is checked against a shape and a character set before anything is emitted, and
+ * the emitted text is built from `JSON.stringify` of values that have already
+ * passed — the request body is never interpolated into the output. Nothing from
+ * the client reaches the file as-is.
+ *
+ * This is dev-only in the same way the map save is (see `devSavePlugin`), so it
+ * exists in no build and `apps/server` is not involved. Even so, an endpoint
+ * that writes a `.ts` file the game imports is the one place in this tool where
+ * a lax check would be more than a bad map, which is why the rules below are
+ * stricter than the format strictly needs.
+ *
+ * Returns the file text, or a list of what was wrong with the request.
+ */
+const ANIM_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SHEET_KEY_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** Printable, no control characters — it ends up inside a comment and a string. */
+const NAME_RE = /^[\p{L}\p{N} '()\-.,&/]{1,64}$/u;
+const MAX_ANIMATIONS = 200;
+const MAX_FRAMES = 64;
+const MAX_FPS = 60;
+
+function buildGroundAnimFile(body: unknown): { text?: string; problems: string[] } {
+  const problems: string[] = [];
+  if (!Array.isArray(body)) return { problems: ['body must be an array'] };
+  if (body.length > MAX_ANIMATIONS) return { problems: [`at most ${MAX_ANIMATIONS} animations`] };
+
+  const seen = new Set<string>();
+  const clean: { id: string; name: string; fps: number; frames: { sheet: string; frame: number }[] }[] =
+    [];
+
+  for (const [index, raw] of body.entries()) {
+    const at = `[${index}]`;
+    if (typeof raw !== 'object' || raw === null) {
+      problems.push(`${at}: not an object`);
+      continue;
+    }
+    const { id, name, fps, frames } = raw as Record<string, unknown>;
+
+    if (typeof id !== 'string' || !ANIM_ID_RE.test(id)) {
+      problems.push(`${at}: bad id`);
+      continue;
+    }
+    if (seen.has(id)) {
+      problems.push(`${at}: duplicate id "${id}"`);
+      continue;
+    }
+    seen.add(id);
+
+    if (typeof name !== 'string' || !NAME_RE.test(name)) {
+      problems.push(`${id}: bad name`);
+      continue;
+    }
+    if (typeof fps !== 'number' || !Number.isFinite(fps) || fps <= 0 || fps > MAX_FPS) {
+      problems.push(`${id}: fps must be in 0..${MAX_FPS}`);
+      continue;
+    }
+    if (!Array.isArray(frames) || frames.length === 0 || frames.length > MAX_FRAMES) {
+      problems.push(`${id}: 1..${MAX_FRAMES} frames required`);
+      continue;
+    }
+
+    const cleanFrames: { sheet: string; frame: number }[] = [];
+    for (const [fi, frame] of frames.entries()) {
+      if (typeof frame !== 'object' || frame === null) {
+        problems.push(`${id}[${fi}]: not an object`);
+        continue;
+      }
+      const { sheet, frame: n } = frame as Record<string, unknown>;
+      if (typeof sheet !== 'string' || !SHEET_KEY_RE.test(sheet)) {
+        problems.push(`${id}[${fi}]: bad sheet key`);
+        continue;
+      }
+      // The frame is NOT checked against the sheet's tile count here — that
+      // needs the asset manifest, which is the editor's job and is reported in
+      // the panel. This bound only stops an absurd number reaching the file.
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 100_000) {
+        problems.push(`${id}[${fi}]: bad frame index`);
+        continue;
+      }
+      cleanFrames.push({ sheet, frame: n });
+    }
+    if (cleanFrames.length !== frames.length) continue;
+
+    clean.push({ id, name, fps, frames: cleanFrames });
+  }
+
+  if (problems.length > 0) return { problems };
+
+  const entries = clean
+    .map((a) => {
+      const frames = a.frames
+        .map((f) => `      { sheet: ${JSON.stringify(f.sheet)}, frame: ${f.frame} },`)
+        .join('\n');
+      return [
+        '  {',
+        `    id: ${JSON.stringify(a.id)},`,
+        `    name: ${JSON.stringify(a.name)},`,
+        `    fps: ${a.fps},`,
+        '    frames: [',
+        frames,
+        '    ],',
+        '  },',
+      ].join('\n');
+    })
+    .join('\n');
+
+  const header = `/**
+ * GENERATED FILE — DO NOT EDIT BY HAND.
+ *
+ * Written by the map editor's **Animations** panel (\`pnpm dev:mapmaker\` →
+ * "Save animations"), which posts to a dev-only Vite endpoint that serialises
+ * this file from validated data. To change an animation, edit it there and save
+ * — hand edits here are overwritten by the next save.
+ *
+ * **This is the WHAT; the map is only the WHERE.** \`farm.json\` stamps an
+ * \`animId\` on a cell and nothing else, so re-timing an animation or swapping a
+ * frame is an edit to this file and does not touch a single map. That is why
+ * this is committed shared config rather than map data (CLAUDE.md §4.4): the
+ * mapmaker writes it and the Farm scene reads it, and the two cannot disagree.
+ *
+ * Frames index the existing asset manifest by sheet key, so nothing here can
+ * renumber \`TILESET_RUNS\` or force a map regeneration.
+ */
+
+import type { GroundAnimation } from './groundAnim.js';
+`;
+
+  const text =
+    clean.length === 0
+      ? `${header}\nexport const AUTHORED_GROUND_ANIMATIONS: readonly GroundAnimation[] = [];\n`
+      : `${header}\nexport const AUTHORED_GROUND_ANIMATIONS: readonly GroundAnimation[] = [\n${entries}\n];\n`;
+
+  return { text, problems: [] };
 }
 
 /**
@@ -130,6 +282,33 @@ function devSavePlugin(): Plugin {
           }
         })();
       });
+
+      // The animation library. Same shape as the terrain save — fixed
+      // destination, no name from the client — but it emits TypeScript rather
+      // than JSON, so `buildGroundAnimFile` validates every field first and
+      // builds the output from checked values only.
+      server.middlewares.use('/__save-ground-anim', (req, res, next) => {
+        if (req.method !== 'POST') {
+          next();
+          return;
+        }
+
+        void (async () => {
+          try {
+            const raw = await readBody(req);
+            const body: unknown = JSON.parse(raw);
+            const { text, problems } = buildGroundAnimFile(body);
+            if (!text) {
+              json(res, 400, { error: 'INVALID', problems });
+              return;
+            }
+            await writeAtomic(GROUND_ANIM_FILE, text);
+            json(res, 200, { ok: true });
+          } catch (err) {
+            json(res, 500, { error: String(err) });
+          }
+        })();
+      });
     },
   };
 }
@@ -139,6 +318,24 @@ export default defineConfig({
   plugins: [devSavePlugin()],
   server: {
     port: 5174,
+    watch: {
+      /*
+       * Saving the animation library must not reload the editor.
+       *
+       * The file is in `packages/shared`, which the editor imports, so writing
+       * it is a source change and Vite full-reloads on it — which happens to
+       * throw away your selection and the "saved" message at the exact moment
+       * you wanted to read it. Nothing is lost (the map autosaves and the
+       * library was just written from memory), but a tool that reloads itself
+       * every time you press Save reads as a tool that crashed.
+       *
+       * Ignoring it is safe precisely BECAUSE the editor is the only writer:
+       * the in-memory library already equals what just landed on disk. The
+       * game's dev server is a different Vite instance and still reloads, which
+       * is what you want — the animation shows up there without a manual step.
+       */
+      ignored: ['**/packages/shared/src/config/groundAnim.generated.ts'],
+    },
   },
   build: {
     target: 'es2022',

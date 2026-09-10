@@ -1,14 +1,18 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, sql } from 'drizzle-orm';
 import {
   CROPS,
   IDLE_ACTION_MS,
   IdleTask,
+  WOOD_PER_TREE,
   benefitsFor,
   isCropId,
   xpForHarvest,
   type CropId,
 } from '@tillhaven/shared';
 import { db, schema } from '../../db/client.js';
+
+/** What a tree drops. Matches `trees.ts` and `idleSim.ts` — one drop, one id. */
+const WOOD_ITEM_ID = 'wood';
 import type { Queryable, Tx } from '../../db/tx.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
 import {
@@ -21,7 +25,14 @@ import {
 } from '../inventory/service.js';
 import { grantXp } from './level.js';
 import { parseIdleTasks } from './idle.js';
-import { simulate, type SimPlot, type SimResult, type SimStop } from './idleSim.js';
+import { energyOf } from './energy.js';
+import {
+  simulate,
+  type SimPlot,
+  type SimResult,
+  type SimStop,
+  type SimTree,
+} from './idleSim.js';
 
 /**
  * Applying the idle simulation (T-13.04, CLAUDE.md §5.3).
@@ -45,6 +56,8 @@ export interface IdleSummary {
   readonly planted: number;
   readonly watered: number;
   readonly harvested: number;
+  /** Trees felled (T-20.06). */
+  readonly chopped: number;
   /** Produce added, by item id. */
   readonly gained: Readonly<Record<string, number>>;
   /** Seeds used, by item id. */
@@ -53,10 +66,14 @@ export interface IdleSummary {
   readonly from: number;
   readonly to: number;
   readonly stoppedReason: SimStop;
+  /** Energy the offline farmer used, already charged to the player. */
+  readonly energySpent: number;
 }
 
 const NOTHING: IdleSummary = {
   actions: 0,
+  energySpent: 0,
+  chopped: 0,
   tilled: 0,
   planted: 0,
   watered: 0,
@@ -187,6 +204,19 @@ export async function applyIdleWork(
     .orderBy(asc(schema.plots.y), asc(schema.plots.x))
     .for('update');
 
+  /*
+   * 2b. Trees, locked, in the same (y, x) order the farm read uses — the same
+   *     stable-order argument the plots have. Locked because a manual chop
+   *     racing this shift must serialise, exactly as `chop()` locks the row it
+   *     is about to fell.
+   */
+  const treeRows = await tx
+    .select()
+    .from(schema.trees)
+    .where(eq(schema.trees.farmId, farm.id))
+    .orderBy(asc(schema.trees.y), asc(schema.trees.x))
+    .for('update');
+
   // 3. Inventory, both containers in one statement — see `lockBothContainers`
   //    for why taking them together rather than in sequence is the deadlock
   //    fix, and why the locks inside `addItem`/`removeItem` below are then
@@ -202,6 +232,7 @@ export async function applyIdleWork(
 
   const result = simulate({
     plots: plotRows.map(toSimPlot),
+    trees: treeRows.map(toSimTree),
     items: slots.map((s) => ({
       slotIndex: s.slotIndex,
       itemId: s.itemId,
@@ -213,9 +244,16 @@ export async function applyIdleWork(
     from,
     to: now,
     durationPercent: benefits.durationPercent,
+    /*
+     * The farmer works on the player's own energy (MVP re-scope), settled for
+     * any sleep in progress. `energyOf` reads the same row every manual action
+     * charges against, so idle work and hand work draw on one bar rather than
+     * two.
+     */
+    energy: energyOf(player, now).current,
   });
 
-  const summary = await writeResult(tx, player, farm.id, plotRows, result, from, now);
+  const summary = await writeResult(tx, player, farm.id, plotRows, treeRows, result, from, now);
   return summary;
 }
 
@@ -227,6 +265,10 @@ export async function applyIdleWork(
  * chance to drop a column, and a dropped `grownMs` is a farm that predicts the
  * wrong action.
  */
+export function toSimTree(row: typeof schema.trees.$inferSelect): SimTree {
+  return { id: row.id, choppedAt: row.choppedAt };
+}
+
 export function toSimPlot(row: typeof schema.plots.$inferSelect): SimPlot {
   return {
     id: row.id,
@@ -260,11 +302,12 @@ async function writeResult(
   player: AuthedPlayer,
   farmId: string,
   before: readonly (typeof schema.plots.$inferSelect)[],
+  treesBefore: readonly (typeof schema.trees.$inferSelect)[],
   result: SimResult,
   from: number,
   now: number,
 ): Promise<IdleSummary> {
-  const counts = { tilled: 0, planted: 0, watered: 0, harvested: 0 };
+  const counts = { tilled: 0, planted: 0, watered: 0, harvested: 0, chopped: 0 };
   const gained: Record<string, number> = {};
   const spent: Record<string, number> = {};
   /** When each plot was last harvested, for the column the real harvest sets. */
@@ -295,9 +338,21 @@ async function writeResult(
         break;
       }
 
+      case IdleTask.CHOP: {
+        counts.chopped += 1;
+        /*
+         * Priced from config, exactly like a harvest: `WOOD_PER_TREE` is what a
+         * tree gives, and taking the number off the simulated bag would make
+         * the projection an authority on how much the player owns.
+         */
+        gained[WOOD_ITEM_ID] = (gained[WOOD_ITEM_ID] ?? 0) + WOOD_PER_TREE;
+        break;
+      }
+
       case IdleTask.HARVEST: {
         counts.harvested += 1;
-        harvestedAt.set(action.plotId, action.at);
+        // Every harvest carries a plot; the guard is for the type, not a case.
+        if (action.plotId) harvestedAt.set(action.plotId, action.at);
         if (!action.cropId) break;
         const crop = CROPS[action.cropId];
         gained[crop.produceItemId] = (gained[crop.produceItemId] ?? 0) + crop.yieldAmount;
@@ -341,6 +396,23 @@ async function writeResult(
       .where(eq(schema.plots.id, plot.id));
   }
 
+  /*
+   * Tree rows: only the ones the simulation felled (T-20.06). `choppedAt` is
+   * the single column, and regrowth is never written — it is derived from that
+   * instant by `treeStateAt`, on the farm read and in the simulator alike
+   * (§4.2).
+   */
+  const treesBeforeById = new Map(treesBefore.map((t) => [t.id, t]));
+  for (const tree of result.trees) {
+    const original = treesBeforeById.get(tree.id);
+    if (!original || original.choppedAt === tree.choppedAt) continue;
+
+    await tx
+      .update(schema.trees)
+      .set({ choppedAt: tree.choppedAt })
+      .where(eq(schema.trees.id, tree.id));
+  }
+
   const experience = xp > 0 ? await grantXp(tx, player.id, xp) : 0;
 
   /*
@@ -355,6 +427,21 @@ async function writeResult(
     .set({ idleProcessedAt: result.processedTo })
     .where(eq(schema.farms.id, farmId));
 
+  /*
+   * Charge what the farmer actually used.
+   *
+   * Unconditional `+=` rather than the conditional update `spendEnergy` uses:
+   * this runs inside the idle applier's own transaction, which already holds
+   * the farm row, and the simulator was handed a budget read in the same
+   * transaction. There is no second reader to race with.
+   */
+  if (result.energySpent > 0) {
+    await tx
+      .update(schema.players)
+      .set({ energySpent: sql`${schema.players.energySpent} + ${result.energySpent}` })
+      .where(eq(schema.players.id, player.id));
+  }
+
   return {
     actions: result.actions.length,
     ...counts,
@@ -364,6 +451,7 @@ async function writeResult(
     from,
     to: result.processedTo,
     stoppedReason: result.stoppedReason,
+    energySpent: result.energySpent,
   };
 }
 

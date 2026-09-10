@@ -102,18 +102,49 @@ describe('GET /api/farm query count', () => {
 
   /**
    * The absolute number, pinned: the session, the player, the farm, its plots,
-   * its animals, and one lookup for a shipment that has come due. Six. If this
-   * changes it changes deliberately — an extra query on the game's hottest path
-   * deserves a moment's thought.
+   * its animals, its trees, and one lookup for a shipment that has come due.
+   * Seven. If this changes it changes deliberately — an extra query on the
+   * game's hottest path deserves a moment's thought.
    *
    * The sixth arrived with the shipping box (T-11.02) and is the cheap half of
    * a deliberate split: settling on the farm poll is what makes an offline
    * player's gold arrive while they stand in their field, but a transaction
    * that settles nothing would cost a BEGIN and a COMMIT as well — three round
    * trips on every poll to do nothing. Asking first costs one.
+   *
+   * **The seventh arrived with trees (T-20.01), and this test is the moment's
+   * thought.** It was six and this assertion failed, which is exactly what it
+   * is for. Kept because the alternatives are worse: the client draws trees on
+   * every poll, so the data is genuinely needed; the query joins the same
+   * `Promise.all` as plots and animals, so it adds no serial latency; and it is
+   * five rows on `trees_farm_idx`. Folding it into the plots query would mean a
+   * union of two unrelated shapes to save a round trip that is already
+   * overlapped.
    */
-  it('needs exactly six queries', async () => {
-    expect(await queriesForFarmState()).toBe(6);
+  it('needs exactly seven queries', async () => {
+    expect(await queriesForFarmState()).toBe(7);
+  });
+
+  /**
+   * Trees must not become the N+1 (T-20.01).
+   *
+   * The plot and animal versions of this above are the reason the endpoint is
+   * still flat, and trees are about to become interactive — chopping, regrowth,
+   * an idle task — which is exactly when someone reaches for a per-tree lookup.
+   */
+  it('is constant as the tree count grows', async () => {
+    const baseline = await queriesForFarmState();
+
+    await db.insert(schema.trees).values(
+      Array.from({ length: 25 }, (_, i) => ({ farmId, x: 200 + i, y: 200 })),
+    );
+
+    const trees = await db.select().from(schema.trees).where(eq(schema.trees.farmId, farmId));
+    expect(trees.length).toBeGreaterThan(25);
+    expect(
+      await queriesForFarmState(),
+      `${trees.length} trees — something is querying per tree`,
+    ).toBe(baseline);
   });
 
   /**
@@ -180,7 +211,7 @@ describe('GET /api/farm query count', () => {
     const settled = await countQueries(() => client.get('/api/farm'));
 
     expect(settled.result.status).toBe(200);
-    expect(settled.queries).toBe(6);
+    expect(settled.queries).toBe(7);
   });
 
   /**
@@ -191,13 +222,14 @@ describe('GET /api/farm query count', () => {
    * farm read does not already have in hand. Everything else the lookahead uses
    * is reused: the farm row, and the plot rows the view is built from.
    *
-   * Seven, not eight: it is charged **once**, on a steady poll with no shift to
+   * Eight, not nine: it is charged **once**, on a steady poll with no shift to
    * apply, and only to a player who has actually switched idle on with at least
-   * one chore. The two free cases above stay free.
+   * one chore. The two free cases above stay free. (Seven and eight since
+   * T-20.01 added the tree read; the +1 this test is about is unchanged.)
    */
   it('costs a working farmer exactly one query more', async () => {
     const baseline = await queriesForFarmState();
-    expect(baseline).toBe(6);
+    expect(baseline).toBe(7);
 
     await db
       .update(schema.farms)
@@ -209,7 +241,7 @@ describe('GET /api/farm query count', () => {
       })
       .where(eq(schema.farms.id, farmId));
 
-    expect(await queriesForFarmState()).toBe(7);
+    expect(await queriesForFarmState()).toBe(baseline + 1);
   });
 
   /**

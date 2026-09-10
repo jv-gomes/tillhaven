@@ -8,11 +8,13 @@ import {
   COOP_ANCHOR,
   COOP_FOOTPRINT,
   HOUSE_FOOTPRINT,
+  RESERVED_GROUND,
   barnFootprint,
   coopFootprint,
   footprintOf,
   footprintsOverlap,
   inFootprint,
+  reservedBy,
 } from './buildings.js';
 import { PLOT_POSITIONS } from './plots.generated.js';
 import { FARM_HEIGHT, FARM_WIDTH } from './tilesets.js';
@@ -41,9 +43,23 @@ describe('building footprints', () => {
     expect(box.y1).toBeLessThan(FARM_HEIGHT);
   });
 
-  it.each(TIERS)('$name covers no plot', ({ box }) => {
+  /**
+   * **The message matters as much as the assertion here** (M6). This test is
+   * what caught a crop field authored on top of the farmhouse, and it said
+   * `plot (8,2): expected true to be false` — true of what, nobody could tell.
+   * The reader is holding a map editor that drew that ground as empty grass, so
+   * the failure has to name the building and say where to look, or it reads as
+   * the test being broken rather than the map.
+   */
+  it.each(TIERS)('$name covers no plot', ({ name, box }) => {
     for (const plot of PLOT_POSITIONS) {
-      expect(inFootprint(box, plot), `plot (${plot.x},${plot.y})`).toBe(false);
+      expect(
+        inFootprint(box, plot),
+        `plot (${plot.x},${plot.y}) is under the ${name}. The buildings are not in ` +
+          'farm.json — their art depends on a tier — so the editor draws their ground ' +
+          'as empty grass. Turn on the "Buildings" overlay in the mapmaker, move the ' +
+          'plot markers off the hatched area, save, and re-run `pnpm plots`.',
+      ).toBe(false);
     }
   });
 
@@ -56,6 +72,25 @@ describe('building footprints', () => {
     expect(footprintsOverlap(COOP_FOOTPRINT, HOUSE_FOOTPRINT)).toBe(false);
     expect(footprintsOverlap(BARN_FOOTPRINT, HOUSE_FOOTPRINT)).toBe(false);
     expect(BUILDING_FOOTPRINTS).toHaveLength(3);
+  });
+
+  /**
+   * **The overlay and the invariant must describe the same three boxes.** The
+   * mapmaker hatches `RESERVED_GROUND` so an author can see what they may not
+   * paint on; these tests fail on `BUILDING_FOOTPRINTS`. A building present in
+   * one list and absent from the other is the exact failure M6 fixed, wearing a
+   * different hat — ground that is taken and shown as free.
+   */
+  it('shows the author every box it will fail them for', () => {
+    expect(RESERVED_GROUND.map((r) => r.box)).toEqual(BUILDING_FOOTPRINTS);
+    expect(RESERVED_GROUND.map((r) => r.name)).toEqual(['house', 'coop', 'barn']);
+  });
+
+  it('names the building standing on a tile, and nothing for open ground', () => {
+    expect(reservedBy({ x: HOUSE_FOOTPRINT.x0, y: HOUSE_FOOTPRINT.y0 })).toBe('house');
+    expect(reservedBy({ x: COOP_FOOTPRINT.x1, y: COOP_FOOTPRINT.y1 })).toBe('coop');
+    expect(reservedBy({ x: BARN_FOOTPRINT.x0, y: BARN_FOOTPRINT.y1 })).toBe('barn');
+    for (const plot of PLOT_POSITIONS) expect(reservedBy(plot)).toBeNull();
   });
 
   /**

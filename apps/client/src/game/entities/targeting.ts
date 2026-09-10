@@ -1,4 +1,4 @@
-import { FARM_HEIGHT, FARM_WIDTH, TILE_SIZE } from '@tillhaven/shared/config';
+import { FARM_BOUNDS, TILE_SIZE, type MapBounds } from '@tillhaven/shared/config';
 import type { Direction } from './movement.js';
 
 /**
@@ -63,14 +63,24 @@ export function standingTile(position: Position): TilePoint {
  * to check what is actually ON the target anyway (a plot, a chest, the
  * merchant), so a clamped target fails the same way an empty one does, and
  * clamping means no caller has to handle a null.
+ *
+ * **`bounds` became a parameter in T-16.09.** It was `FARM_WIDTH`/`FARM_HEIGHT`
+ * read as module constants, which is right exactly once and silently wrong the
+ * moment the same character stands in a ten-tile room: facing east from the far
+ * wall would report a tile nineteen columns outside it. Defaulted to the farm
+ * so the farm's four call sites read unchanged.
  */
-export function facedTile(position: Position, facing: Direction): TilePoint {
+export function facedTile(
+  position: Position,
+  facing: Direction,
+  bounds: MapBounds = FARM_BOUNDS,
+): TilePoint {
   const standing = standingTile(position);
   const forward = FORWARD[facing];
 
   return {
-    tileX: clamp(standing.tileX + forward.tileX, 0, FARM_WIDTH - 1),
-    tileY: clamp(standing.tileY + forward.tileY, 0, FARM_HEIGHT - 1),
+    tileX: clamp(standing.tileX + forward.tileX, 0, bounds.width - 1),
+    tileY: clamp(standing.tileY + forward.tileY, 0, bounds.height - 1),
   };
 }
 

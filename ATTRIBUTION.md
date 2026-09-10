@@ -4,7 +4,7 @@ Every third-party asset used in Tillhaven, and its licence.
 
 ## Art
 
-All game art comes from one licensed pack, stored in `new_assets/` and copied
+All game art comes from one licensed pack, stored in `assets/` and copied
 into `apps/client/public/assets/` by `scripts/prepare-assets.mjs`.
 
 ### Farm RPG Asset Pack — EmanuelleDev
@@ -28,7 +28,7 @@ into `apps/client/public/assets/` by `scripts/prepare-assets.mjs`.
   in T-7.01) and must appear wherever the game shows credits. This file is
   the canonical record.
 - **Redistribution note:** because redistribution is forbidden, the
-  `new_assets/` directory must **not** be committed to any public repository.
+  `assets/` directory must **not** be committed to any public repository.
   Only the subset actually shipped inside the built client is distributed as
   part of the game, which the licence's commercial-use grant covers.
 
@@ -44,7 +44,8 @@ Subfolders in use (MVP):
 | `Animals/Farm/` | Chickens (adult + baby, all colors), cows |
 | `Icons/RPG icons/` | Tool icons (wood tier) |
 | `Icons/Farm Animals`, `Icons/Food Icons` | Item icons (egg, milk, feed, …) |
-| `UI/` | Inventory panel art, HUD, money icon, buttons |
+| `UI/` | **The whole folder** (Phase U): panel and slot frames, the timber plank, button plates, bars, tags, the dialogue box, clocks, weather and emotes |
+| `UI/Inventory/`, `UI/Clock/` | Nine-slice sources cut by `scripts/lib/ui-crops.mjs` |
 
 ### Removed art
 
@@ -58,8 +59,47 @@ None yet. See the Phase 14 backlog in `ROADMAP.md`.
 
 ## Fonts
 
-None bundled. The site uses system font stacks only (`ui-monospace` and
-`system-ui`), so there is nothing to licence.
+Two bundled typefaces, both **SIL Open Font License 1.1**, added in Phase U.
+
+Until then the answer here was "none bundled — the site uses system font stacks
+only, so there is nothing to licence", and `hud.css` recorded the reason: adding
+a face "would mean a second licence in ATTRIBUTION.md for a decision nobody has
+taken yet". The decision was taken; this is that second licence.
+
+The files live in `apps/client/public/fonts/` and — unlike the art pack — **are
+committed**. The OFL exists to permit redistribution, so there is no reason to
+make a fresh clone fetch them by hand. See that directory's `README.md` for
+provenance and subsetting notes.
+
+### Pixelify Sans — interface text
+
+- **Author:** The Pixelify Sans Project Authors
+- **Source:** <https://github.com/eifetx/Pixelify-Sans>
+- **Licence:** SIL Open Font License 1.1, shipped verbatim as
+  `apps/client/public/fonts/pixelify-sans-OFL.txt`
+- **Files:** `pixelify-sans-latin.woff2`, `pixelify-sans-latin-ext.woff2`
+  (variable, weights 400–700)
+
+### Silkscreen — labels and buttons
+
+- **Author:** The Silkscreen Project Authors
+- **Source:** <https://github.com/googlefonts/silkscreen>
+- **Licence:** SIL Open Font License 1.1, shipped verbatim as
+  `apps/client/public/fonts/silkscreen-OFL.txt`
+- **Files:** `silkscreen-{400,700}-latin.woff2` and their `-ext` pairs
+
+### The obligations, and what they forbid
+
+- The licence text ships alongside the fonts. ✅
+- Credit is given. ✅ — `packages/shared/src/config/credits.ts` is the canonical
+  list, rendered at `/credits`. `config.test.ts` fails the build if a `.woff2`
+  in `public/fonts/` has no credit row or its licence file is missing.
+- **Reserved Font Names may not be reused on a modified copy.** If either face
+  is ever re-subsetted, hinted or patched, the result must not be called
+  "Pixelify Sans" or "Silkscreen" — rename the file *and* the `font-family`.
+- The fonts may not be sold on their own.
+- They are **self-hosted**; nothing at runtime requests `fonts.googleapis.com`
+  or `fonts.gstatic.com`, so no player's IP is handed to a third party.
 
 ## Software
 

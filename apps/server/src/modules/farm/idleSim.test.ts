@@ -7,12 +7,20 @@ import {
   IDLE_MAX_CATCHUP_ACTIONS,
   MINUTE,
   WATER_DURATION_MS,
+  TREE_REGROW_MS,
+  WOOD_PER_TREE,
   getItem,
   idleActionsIn,
 } from '@tillhaven/shared';
 import { effectiveGrowthMs, settleGrowth } from './growth.js';
 import { addToSlots, countInSlots, type SlotContents } from '../inventory/service.js';
-import { nextIdleAction, simulate, type SimInput, type SimPlot } from './idleSim.js';
+import {
+  nextIdleAction,
+  simulate,
+  type SimInput,
+  type SimPlot,
+  type SimTree,
+} from './idleSim.js';
 
 /**
  * T-13.03a — the pure simulator, till and plant.
@@ -77,7 +85,7 @@ function input(over: Partial<SimInput> = {}): SimInput {
 }
 
 /** Just the shape a reader cares about: what happened, in order. */
-function log(result: { actions: readonly { kind: string; plotId: string }[] }) {
+function log(result: { actions: readonly { kind: string; plotId?: string }[] }) {
   return result.actions.map((a) => `${a.kind}:${a.plotId}`);
 }
 
@@ -1023,5 +1031,183 @@ describe('nextIdleAction', () => {
 
     // And it is genuinely the action a full simulation over that span finds.
     expect(simulate({ ...args, to: next.at }).actions).toEqual([next]);
+  });
+});
+
+/**
+ * T-20.06 — the farmer chops.
+ *
+ * The first idle task that does not address a plot, which is why these are
+ * worth writing at length: the simulator's whole vocabulary was plots, and a
+ * chop that quietly indexed `plots` with a tree's index would name a random
+ * plot in the action log and fell nothing.
+ */
+describe('simulate — chopping', () => {
+  const tree = (id: string, choppedAt: number | null = null): SimTree => ({ id, choppedAt });
+  const AXE = 'axe_wood';
+
+  /** A farm with nothing to farm, so only chopping can happen. */
+  function chopInput(over: Partial<SimInput> = {}): SimInput {
+    return input({
+      plots: [],
+      trees: [tree('t1')],
+      items: bag({ [AXE]: 1 }),
+      tasks: ['chop'],
+      cropId: null,
+      ...over,
+    });
+  }
+
+  it('fells a standing tree and banks the wood', () => {
+    const result = simulate(chopInput());
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]!.kind).toBe('chop');
+    expect(result.actions[0]!.treeId, 'names the tree, not a plot').toBe('t1');
+    expect(result.actions[0]!.plotId).toBeUndefined();
+    expect(held(result.items, 'wood')).toBe(WOOD_PER_TREE);
+    expect(result.trees[0]!.choppedAt).toBe(result.actions[0]!.at);
+  });
+
+  /**
+   * The axe check, which is the simulator agreeing with the endpoint rather
+   * than duplicating it. A farmer told to chop with no axe must SKIP the chore,
+   * not fail the shift — the same way an empty seed bag is not an error.
+   */
+  it('skips chopping entirely without an axe', () => {
+    const result = simulate(chopInput({ items: bag({}) }));
+
+    expect(result.actions).toHaveLength(0);
+    expect(result.stoppedReason).toBe('nothing_to_do');
+    expect(result.trees[0]!.choppedAt, 'the tree is untouched').toBeNull();
+  });
+
+  it('does not chop a stump that has not regrown', () => {
+    const result = simulate(chopInput({ trees: [tree('t1', T0)] }));
+
+    expect(result.actions).toHaveLength(0);
+    expect(result.stoppedReason).toBe('nothing_to_do');
+  });
+
+  /**
+   * Regrowth is the third thing time alone makes possible, and the reason
+   * `LOOKAHEAD_MS` had to grow past one wet window. A farmer whose only pending
+   * work is a stump must WAIT for it rather than reporting "nothing to do".
+   */
+  it('waits for a stump to regrow and then fells it again', () => {
+    const result = simulate(
+      chopInput({
+        trees: [tree('t1', T0 - TREE_REGROW_MS + 5 * IDLE_ACTION_MS)],
+        to: T0 + 20 * IDLE_ACTION_MS,
+      }),
+    );
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]!.at, 'not before it grew back').toBeGreaterThanOrEqual(
+      T0 + 5 * IDLE_ACTION_MS,
+    );
+  });
+
+  it('works down every tree, in the caller‘s order', () => {
+    const result = simulate(
+      chopInput({ trees: [tree('a'), tree('b'), tree('c')], to: T0 + 10 * IDLE_ACTION_MS }),
+    );
+
+    expect(result.actions.map((a) => a.treeId)).toEqual(['a', 'b', 'c']);
+    expect(held(result.items, 'wood')).toBe(3 * WOOD_PER_TREE);
+    // ...and then stops, rather than chopping stumps.
+    expect(result.stoppedReason).toBe('nothing_to_do');
+  });
+
+  /**
+   * Chopping is LAST in `PRIORITY`, and the reason is time-criticality: a
+   * standing tree loses nothing by waiting, a drying crop does. This is what
+   * makes that ordering observable.
+   */
+  it('never spends a slot on wood while a crop needs water', () => {
+    /*
+     * Dry AND unfinished — both matter. The first fixture used the crop's own
+     * duration, which for `CROP_IDS[0]` is exactly `WATER_DURATION_MS`, so one
+     * full wet window ripened it; a ripe crop is correctly never watered
+     * (`canWater` -> `isPaused`), and the test failed for the right reason
+     * about the wrong thing. Three windows' worth of growth cannot finish in
+     * one.
+     */
+    const thirsty = plot('p', {
+      tilledAt: T0 - HOUR,
+      cropId: CROP,
+      plantedAt: T0 - 3 * WATER_DURATION_MS,
+      growthDurationMs: 3 * WATER_DURATION_MS,
+      wateredAt: T0 - WATER_DURATION_MS,
+      grownMs: 0,
+    });
+
+    const result = simulate(
+      chopInput({ plots: [thirsty], trees: [tree('t1')], tasks: ['water', 'chop'] }),
+    );
+
+    expect(result.actions[0]!.kind, 'the crop comes first').toBe('water');
+  });
+
+  /**
+   * A full bag stops a chop the way it stops a harvest, and reports the same
+   * reason — the one stop a player can actually act on.
+   */
+  it('reports inventory_full when the wood will not fit', () => {
+    // Every slot occupied by something wood cannot stack with.
+    const capacity = 2;
+    const full = bag({ [AXE]: 1, [SEED]: 1 }, capacity);
+
+    const result = simulate(chopInput({ items: full, capacity }));
+
+    expect(result.actions).toHaveLength(0);
+    expect(result.stoppedReason).toBe('inventory_full');
+    expect(result.trees[0]!.choppedAt, 'the tree is still standing').toBeNull();
+  });
+
+  /**
+   * **The guard for `LOOKAHEAD_MS`, and it was missing.** Every test above calls
+   * `simulate` with an explicit `to`, so none of them touch the horizon — a
+   * break-test reverting it to `WATER_DURATION_MS + IDLE_ACTION_MS` passed all
+   * of them. `nextIdleAction` is the only caller, and a stump regrows after 8h
+   * against watering's 4h, so with the old horizon the farm view would report
+   * "nothing next" to a farmer whose sole pending job was a tree.
+   */
+  it('looks far enough ahead to see a regrowing tree (LOOKAHEAD_MS)', () => {
+    /*
+     * Chopped ONE hour ago, so it regrows at +7h — beyond the old 4h horizon
+     * and inside the new 8h one. The first version of this used six hours ago,
+     * which regrows at +2h and sits comfortably inside BOTH, so it passed with
+     * the horizon reverted and proved nothing.
+     */
+    const choppedAt = T0 - HOUR;
+    const next = nextIdleAction({
+      plots: [],
+      trees: [tree('t1', choppedAt)],
+      items: bag({ [AXE]: 1 }),
+      capacity: ROOMY,
+      tasks: ['chop'],
+      cropId: null,
+      from: T0,
+      now: T0,
+    });
+
+    expect(next, 'the horizon does not reach the regrowth').not.toBeNull();
+    expect(next!.kind).toBe('chop');
+    expect(next!.treeId).toBe('t1');
+    expect(next!.at).toBeGreaterThanOrEqual(choppedAt + TREE_REGROW_MS);
+    // ...and the whole point: that instant is past one wet window.
+    expect(choppedAt + TREE_REGROW_MS - T0).toBeGreaterThan(WATER_DURATION_MS);
+  });
+
+  it('is inert for a farm with no trees at all', () => {
+    // Accounts predating the T-20.01 migration have none, and must not break.
+    // `trees` omitted entirely rather than passed as undefined, which is what
+    // `applyIdleWork` does for a farm whose rows do not exist.
+    const { trees: _omitted, ...noTrees } = chopInput();
+    const result = simulate(noTrees);
+
+    expect(result.actions).toHaveLength(0);
+    expect(result.trees).toEqual([]);
   });
 });

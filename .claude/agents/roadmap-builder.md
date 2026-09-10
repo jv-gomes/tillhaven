@@ -18,15 +18,20 @@ properly, not to sprint through several half-done.
    references throughout the roadmap (`§4.1`, `§4.3`, …) point into it. Note
    that section 3 is intentionally absent — do not renumber anything.
 2. Read `ROADMAP.md`. The **Open Decisions** table near the top is
-   authoritative: D-1 through D-6 live there and nowhere else. Never silently
+   authoritative: D-1 through D-24 live there and nowhere else. Never silently
    resolve an open decision in code.
-3. Find the frontier: the first `### T-x.yy` heading whose **Done** checklist
-   still has `- [ ]` items. Work tasks strictly in order unless told otherwise.
+3. Find the frontier: the first `### T-x.yy` heading that is not marked
+   `✅ **DONE**`, or whose **Done** checklist still has `- [ ]` items. Work
+   tasks strictly in order unless told otherwise.
 
-**As of 2026-08-25 the frontier is `T-7.07 — Preload v2 and old-asset
-deletion`.** (T-7.06 is finished — all boxes ticked, write-up present — but its
-heading is missing the `✅ **DONE**` marker. Add it when you next touch the
-file.)
+**As of 2026-09-07, Phases 7-29 are complete** — 155 tasks done, one
+(`T-15.14`) superseded. The frontier is **Phase 30**, the start of the gameplay
+overhaul. Those phases have a dedicated sibling agent, `gameplay-builder`, which
+carries the patterns they depend on; prefer it for anything numbered T-30 or
+above. What remains outside them is Phase 14's backlog: **T-14.06** (economy
+tuning, needs real players), **T-14.08** (scheduled jobs, blocked on D-2),
+**T-14.11** (two small accessibility design calls) and **T-14.12** (real
+ToS/Privacy, needs a lawyer).
 
 ## Task anatomy
 

@@ -1,3 +1,4 @@
+import { MODAL_ATTR } from '../lib/focus.js';
 import { HOTBAR_SLOTS, UI_INVENTORY_SLOTS, UI_SLOT } from '@tillhaven/shared/config';
 import { codeOf, messageFor } from '../net/errors.js';
 import { idempotencyKey } from '../net/api.js';
@@ -111,6 +112,9 @@ export class InventoryPanel {
 
     this.root = document.createElement('section');
     this.root.className = 'pack';
+    // A dialog the player is reading, so it takes movement input (T-18.12).
+    // `isModalOpen` finds it by this attribute; see `lib/focus.ts`.
+    this.root.setAttribute(MODAL_ATTR, '');
     this.root.hidden = true;
     this.root.setAttribute('aria-label', 'Inventory');
     this.root.innerHTML = `
@@ -132,9 +136,16 @@ export class InventoryPanel {
         <div class="pack__grid" data-bag-grid></div>
       </section>
 
+      <!--
+        "The top row" was true only while twelve columns fitted (T-29.01). On a
+        phone the grid reflows to as many as the screen allows, so the hotbar
+        stops being a row — but every hotbar slot still carries its own gilt
+        underline, which is the thing the reader can actually see. Naming the
+        marker instead of the row makes the sentence true at every width.
+      -->
       <p class="pack__hint">
         Drag a slot onto another, or click one and then the slot to move it to.
-        The top row is your hotbar.
+        The slots with a gold line underneath are your hotbar.
       </p>
     `;
 
@@ -172,6 +183,19 @@ export class InventoryPanel {
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !this.open) return;
+      /*
+       * Consume the press (T-18.13, BUG-11). Phaser's keyboard plugin listens
+       * on `window`; these panels listen on `document`, which is the last hop
+       * before it — so stopping here is what keeps one Escape to one layer.
+       * Without it, closing this panel ALSO ran the Interior scene's handler
+       * and walked the player out of the house in the same press.
+       *
+       * `stopPropagation`, not `stopImmediatePropagation`: the other panels'
+       * listeners are on this same node and are harmless (each checks its own
+       * `open`), and silencing them would make this depend on registration
+       * order, which is the thing that made the bug hard to see.
+       */
+      e.stopPropagation();
       // Escape cancels a pick-up first, and only closes the panel if there is
       // nothing to cancel — otherwise there is no way to put an item back down.
       if (this.picked !== null) this.pickUp(null);

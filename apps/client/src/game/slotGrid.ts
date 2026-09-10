@@ -46,7 +46,15 @@ export function buildSlotCell(options: SlotCellOptions): HTMLButtonElement {
 
   if (!slot) return cell;
 
-  if (item) cell.title = `${item.name} ×${slot.quantity}`;
+  /*
+   * The tooltip reads these, not a `title` (Phase U). `title` rendered in the
+   * OS font after a half-second delay and never appeared for a keyboard user at
+   * all; `tooltip.ts` delegates off these attributes and shows on focus too.
+   * The data lives on the cell rather than in a closure so a re-rendered grid
+   * needs no rebinding.
+   */
+  cell.dataset['item'] = slot.itemId;
+  cell.dataset['qty'] = String(slot.quantity);
 
   const art = icon(slot.itemId, 2);
   if (art) cell.append(art);

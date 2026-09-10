@@ -22,6 +22,35 @@ import type { IconFactory } from './slotGrid.js';
 const SLOT_SCALE = 3;
 
 /**
+ * The upscale on a short viewport (T-18.03).
+ *
+ * **2, not 2.5 or "80%".** The camera reserves the hotbar's height and fits the
+ * farm in what is left, so on a 1366x768 laptop the strip's 80px was the
+ * difference between zoom 2 and zoom 1 — the game rendering at native size in
+ * the middle of the screen. Shrinking it buys that zoom level back.
+ *
+ * It has to stay a whole number for the same reason `SLOT_SCALE` does: the slot
+ * art is an 18px sprite and every offset handed to CSS is measured at this
+ * scale. 18x2 is sharp; 18x2.5 is a smear with half-pixel background offsets.
+ */
+const SLOT_SCALE_COMPACT = 2;
+
+/**
+ * Below this viewport height the hotbar goes compact.
+ *
+ * Matches the `max-height: 820px` query in `hud.css` that shrinks the top bar,
+ * and is chosen so the sizes that already clear zoom 2 at full size — a
+ * 900-tall laptop, a 1080p desktop — are untouched. **If you change one, change
+ * the other**: the two halves of the chrome have to shrink together or the
+ * camera gains back less than it needs.
+ */
+const COMPACT_MAX_HEIGHT = 820;
+
+function slotScaleFor(viewportHeight: number): number {
+  return viewportHeight <= COMPACT_MAX_HEIGHT ? SLOT_SCALE_COMPACT : SLOT_SCALE;
+}
+
+/**
  * Keys 1–9, then 0, -, = for slots 10–12.
  *
  * Matched on `event.code`, not `event.key`: `code` is the physical key, so a
@@ -63,6 +92,49 @@ export class Hotbar {
   private selected = 0;
   private readonly listeners: ((equipped: Equipped | null) => void)[] = [];
 
+  /** The scale currently written to CSS, so a resize that changes nothing is free. */
+  private scale = 0;
+
+  private readonly onResize = (): void => {
+    this.applyScale();
+  };
+
+  /**
+   * Re-picks the slot scale for the current viewport, if it has changed.
+   *
+   * Public because `hud.chrome()` calls it **before measuring** (T-18.03). The
+   * camera and this strip both react to a resize, and nothing orders those two
+   * listeners — so a camera that fitted first would reserve the height of a
+   * hotbar that was about to change size, and settle on a zoom that is wrong
+   * until the next resize. Syncing on read removes the ordering question
+   * instead of trying to win it.
+   */
+  syncScale(): void {
+    this.applyScale();
+  }
+
+  private applyScale(): void {
+    const root = this.root;
+    if (!root) return;
+
+    const scale = slotScaleFor(window.innerHeight);
+    if (scale === this.scale) return;
+    this.scale = scale;
+
+    const px = (n: number) => `${n * scale}px`;
+    root.style.setProperty('--slot-sheet', `url("${UI_INVENTORY_SLOTS.path}")`);
+    root.style.setProperty('--slot-size', px(UI_SLOT.size));
+    root.style.setProperty(
+      '--slot-sheet-size',
+      `${px(UI_INVENTORY_SLOTS.width)} ${px(UI_INVENTORY_SLOTS.height)}`,
+    );
+    root.style.setProperty('--slot-idle', `-${px(UI_SLOT.idle.x)} -${px(UI_SLOT.idle.y)}`);
+    root.style.setProperty(
+      '--slot-selected',
+      `-${px(UI_SLOT.selected.x)} -${px(UI_SLOT.selected.y)}`,
+    );
+  }
+
   mount(host: HotbarHost): HTMLElement {
     this.host = host;
 
@@ -71,20 +143,14 @@ export class Hotbar {
     this.root.setAttribute('role', 'radiogroup');
     this.root.setAttribute('aria-label', 'Hotbar');
 
-    // The slot art's position inside its sheet, scaled — written once in the
-    // shared config (UI_SLOT) and handed to CSS, never retyped in a stylesheet.
-    const px = (n: number) => `${n * SLOT_SCALE}px`;
-    this.root.style.setProperty('--slot-sheet', `url("${UI_INVENTORY_SLOTS.path}")`);
-    this.root.style.setProperty('--slot-size', px(UI_SLOT.size));
-    this.root.style.setProperty(
-      '--slot-sheet-size',
-      `${px(UI_INVENTORY_SLOTS.width)} ${px(UI_INVENTORY_SLOTS.height)}`,
-    );
-    this.root.style.setProperty('--slot-idle', `-${px(UI_SLOT.idle.x)} -${px(UI_SLOT.idle.y)}`);
-    this.root.style.setProperty(
-      '--slot-selected',
-      `-${px(UI_SLOT.selected.x)} -${px(UI_SLOT.selected.y)}`,
-    );
+    this.applyScale();
+    /*
+     * Re-applied on resize (T-18.03). The scale is chosen from the viewport
+     * height, and dragging a window shorter has to shrink the strip — otherwise
+     * the camera, which re-fits on the same event and reserves this element's
+     * height, is measuring a hotbar that no longer matches the screen.
+     */
+    window.addEventListener('resize', this.onResize);
 
     for (let index = 0; index < HOTBAR_SLOTS; index++) {
       const cell = document.createElement('button');
@@ -214,7 +280,10 @@ export class Hotbar {
       if (!slot) {
         art.replaceChildren();
         qty.textContent = '';
-        cell.title = '';
+        // Clearing the dataset is what hides the tooltip for an empty slot;
+        // `tooltip.ts` only matches cells that carry `data-item`.
+        delete cell.dataset['item'];
+        delete cell.dataset['qty'];
         cell.setAttribute('aria-label', `Slot ${index + 1}: empty`);
         continue;
       }
@@ -225,7 +294,9 @@ export class Hotbar {
       qty.textContent = slot.quantity > 1 ? String(slot.quantity) : '';
 
       const name = ITEMS[slot.itemId]?.name ?? slot.itemId;
-      cell.title = `${name} ×${slot.quantity}`;
+      // The styled tooltip reads these; `title` was the native one it replaced.
+      cell.dataset['item'] = slot.itemId;
+      cell.dataset['qty'] = String(slot.quantity);
       cell.setAttribute('aria-label', `Slot ${index + 1}: ${name}, ${slot.quantity}`);
     }
   }

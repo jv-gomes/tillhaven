@@ -15,6 +15,7 @@ import {
   type ToolAnim,
 } from '@tillhaven/shared/config';
 import type { Appearance } from '@tillhaven/shared/schemas';
+import type { Swing } from '../actions.js';
 
 /**
  * Loading and animating the four strips that make up one player's character.
@@ -49,8 +50,31 @@ export const FARM_ANIMS = [
   'run',
   'hoe',
   'watering',
+  // T-16.02: the three verbs that used to happen in silence. `plant` is here
+  // without a tool overlay on purpose — see `TOOL_ANIMS` in assets.ts.
+  'plant',
+  'harvest',
+  'pet',
+  // T-20.04. Left out of the first draft of chopping, with exactly the symptom
+  // this list's comment predicts: the swing "played", the console stayed clean,
+  // and the character stood in its idle loop while the tree fell. See
+  // `SwingsAreLoadable` below — it is now a compile error, not a browser bug.
+  'axe',
 ] as const satisfies readonly CharAnimKey[];
 export type FarmAnim = (typeof FARM_ANIMS)[number];
+
+/**
+ * Every swing the game can ask for must be a strip this module loads.
+ *
+ * **This is the compile error the comment above promises.** It did not exist,
+ * and T-20.04 walked straight into the gap it left: `Swing` gained `'axe'`,
+ * `FARM_ANIMS` did not, and `playToolAnimation('axe')` became a silent no-op —
+ * the T-8.04 failure mode, rediscovered by hand in a browser instead of by
+ * `tsc`. Adding a verb to `Swing` without loading its strip now fails to build.
+ */
+type SwingsAreLoadable = Exclude<Swing, FarmAnim> extends never ? true : never;
+const _swingsAreLoadable: SwingsAreLoadable = true;
+void _swingsAreLoadable;
 
 /** Texture key for one layer strip. Identical to its URL, deliberately. */
 export function layerTextureKey(

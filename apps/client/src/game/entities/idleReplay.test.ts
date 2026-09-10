@@ -34,6 +34,8 @@ const BOUNDS = { minX: -1e6, maxX: 1e6, minY: -1e6, maxY: 1e6 };
 const T0 = 1_700_000_000_000;
 
 const action = (over: Partial<{ plotId: string; at: number; kind: 'till' }> = {}) => ({
+  // An `IdleNextAction`, which still names a plot — it is `ReplayPlan` that
+  // became target-agnostic in T-20.06, not the server's action.
   plotId: 'p1',
   at: T0 + 10_000,
   kind: 'till' as const,
@@ -164,7 +166,7 @@ describe('travelMs', () => {
     let elapsed = 0;
     for (let i = 0; i < 10_000; i++) {
       const input = replayInput(
-        { plotId: 'p', at: 0, kind: 'till', target, facing: 'down', travelMs: 0, departAt: 0 },
+        { targetId: 'p', at: 0, kind: 'till', target, facing: 'down', travelMs: 0, departAt: 0 },
         state,
         1,
         frameDistance(16),

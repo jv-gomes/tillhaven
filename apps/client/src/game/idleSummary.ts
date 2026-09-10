@@ -1,4 +1,4 @@
-import { ITEMS, MINUTE } from '@tillhaven/shared/config';
+import { ITEMS, ItemCategory, MINUTE } from '@tillhaven/shared/config';
 import type { IdleSummaryView } from '@tillhaven/shared/types';
 
 /**
@@ -51,13 +51,21 @@ export function idleSummaryMessage(summary: IdleSummaryView | null): string | nu
   if (summary.watered > 0) parts.push(`watered ${summary.watered}`);
 
   /*
-   * Harvests are named, and the rest are not, deliberately. A count of plots
-   * watered is progress; a count of things picked is LOOT, and the player wants
-   * to know it was four leeks rather than four somethings. Sorted by item id so
-   * the sentence reads the same way twice for the same haul.
+   * Loot is named, and the rest is not, deliberately. A count of plots watered
+   * is progress; a count of things gained is LOOT, and the player wants to know
+   * it was four leeks rather than four somethings. Sorted by item id so the
+   * sentence reads the same way twice for the same haul.
+   *
+   * **The verb comes from the item's category** (T-20.06), not from the field
+   * name. This loop said "picked" for everything, which was right while
+   * everything here was a crop — and became wrong the moment idle chopping put
+   * wood in the same map, reporting "picked 15 × Wood". Asking config keeps it
+   * right for whatever the next material is, without a second list to maintain.
    */
   for (const [itemId, quantity] of Object.entries(summary.harvested).sort()) {
-    if (quantity > 0) parts.push(`picked ${quantity} × ${itemName(itemId)}`);
+    if (quantity <= 0) continue;
+    const verb = ITEMS[itemId]?.category === ItemCategory.MATERIAL ? 'chopped' : 'picked';
+    parts.push(`${verb} ${quantity} × ${itemName(itemId)}`);
   }
 
   if (parts.length === 0 && !summary.bagWasFull) return null;

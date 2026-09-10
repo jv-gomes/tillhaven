@@ -3,7 +3,9 @@ import {
   GameError,
   TRADE_MIN_ACCOUNT_AGE_MS,
   TRADE_MIN_FARM_LEVEL,
+  TradeBlock,
   levelForXp,
+  type TradeEligibility,
 } from '@tillhaven/shared';
 import type { AuthedPlayer } from '../../middleware/auth.js';
 
@@ -25,22 +27,13 @@ import type { AuthedPlayer } from '../../middleware/auth.js';
  * can be tested exactly rather than approximately.
  */
 
-export const TradeBlock = {
-  FLAGGED: 'flagged',
-  ACCOUNT_TOO_NEW: 'account_too_new',
-  FARM_TOO_LOW: 'farm_too_low',
-} as const;
-export type TradeBlock = (typeof TradeBlock)[keyof typeof TradeBlock];
-
-export interface TradeEligibility {
-  readonly eligible: boolean;
-  /** Why not, or null when they may trade. */
-  readonly blockedBy: TradeBlock | null;
-  /** ms until the account is old enough. 0 once it is. */
-  readonly accountAgeRemainingMs: number;
-  readonly farmLevel: number;
-  readonly requiredFarmLevel: number;
-}
+/*
+ * The SHAPE lives in `packages/shared/src/types` since T-22.03, because it is
+ * sent to the client on every poll; the DECISION stays here, because it needs
+ * `flaggedAt` and that never leaves the server (§4.1).
+ */
+export { TradeBlock };
+export type { TradeEligibility };
 
 /** The minimum a player needs for eligibility to be defined. */
 export type TradeCandidate = Pick<

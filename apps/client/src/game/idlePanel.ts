@@ -62,6 +62,68 @@ export function idleBody(form: IdleForm): IdleBody {
   };
 }
 
+/**
+ * What the switch means when it is turned on with nothing ticked (T-18.07).
+ *
+ * Every chore the farmer can actually be told to do, because that is
+ * overwhelmingly what "let my farmer work" means — a player who wants a subset
+ * unticks from a working farm, and can see what they are turning off while they
+ * do it. The alternative reading, "work, but do nothing", is the bug this
+ * replaces: BUG-09 let the switch go on with an empty list, which took the farm
+ * away (movement and the action key go dead on `enabled` alone) in exchange for
+ * a farmer that provably could not act.
+ *
+ * **`plant` is left out when no crop is chosen, and that is not a detail.** The
+ * endpoint refuses `plant` without a `cropId` (`IDLE_CROP_REQUIRED`, T-13.06) —
+ * a farmer told to sow and not told what is a farmer standing in a field doing
+ * nothing, which is the same class of bug as this one. So a default of all four
+ * makes the whole PUT fail, and the player turns the switch on and gets a red
+ * toast instead of a farmer. Found in the browser, not by a test: both rules
+ * are individually right and only their intersection is wrong, and nothing on
+ * either side of it knew the other existed.
+ *
+ * Picking a crop FOR them was the other option and is worse — it spends seeds
+ * they did not choose to spend, on a crop they did not choose.
+ */
+export function defaultTasks(cropId: string | null): readonly IdleTask[] {
+  const sowing = cropId !== null && isCropId(cropId);
+  return sowing ? IDLE_TASK_TYPES : IDLE_TASK_TYPES.filter((task) => task !== IdleTask.PLANT);
+}
+
+/** Which control the player just touched. Decides what an empty list means. */
+export type IdleSource = 'switch' | 'tasks' | 'crop';
+
+export type IdleChange =
+  | { readonly kind: 'send'; readonly form: IdleForm }
+  | { readonly kind: 'refuse'; readonly message: string };
+
+/**
+ * What to do with the controls as they now read — the whole of T-18.07's rule,
+ * pure and in one place.
+ *
+ * `enabled` with no chores is not a state this panel may produce, and there are
+ * exactly two ways to reach for it. Turning the switch ON with nothing ticked
+ * is a player saying "work" and meaning all of it, so it fills in
+ * `defaultTasks`. Unticking the LAST chore on a working farm is the other, and
+ * it is refused rather than silently reinterpreted: quietly re-ticking a box
+ * the player just cleared, or switching idle off as a side effect of a
+ * checkbox, are both the control doing something it was not asked to.
+ *
+ * Switching OFF passes through untouched whatever the list is — the chores are
+ * remembered so the next switch-on does what the last one did.
+ */
+export function idleChange(form: IdleForm, source: IdleSource): IdleChange {
+  if (!form.enabled || form.tasks.length > 0) return { kind: 'send', form };
+
+  if (source === 'tasks') {
+    return { kind: 'refuse', message: 'Your farmer needs at least one chore. Turn idle off instead.' };
+  }
+
+  // The switch, or the crop dropdown on a farm already in the bad state from
+  // before this rule existed. Both read as "work" — fill in the chores.
+  return { kind: 'send', form: { ...form, tasks: [...defaultTasks(form.cropId)] } };
+}
+
 /** Sentinel for the dropdown's "sow nothing" row. Not a crop id, deliberately. */
 const NO_CROP = '';
 
@@ -70,6 +132,7 @@ const TASK_LABELS: Record<IdleTask, string> = {
   [IdleTask.PLANT]: 'Plant seeds',
   [IdleTask.WATER]: 'Water crops',
   [IdleTask.HARVEST]: 'Harvest what is ready',
+  [IdleTask.CHOP]: 'Chop trees (needs an axe)',
 };
 
 export interface IdleHost {
@@ -164,7 +227,7 @@ export class IdlePanel {
       label.append(box, text);
       tasks.append(label);
       this.taskEls.set(task, box);
-      box.addEventListener('change', () => void this.submit());
+      box.addEventListener('change', () => void this.submit('tasks'));
     }
 
     const nothing = document.createElement('option');
@@ -178,8 +241,8 @@ export class IdlePanel {
       this.cropEl.append(option);
     }
 
-    this.switchEl.addEventListener('change', () => void this.submit());
-    this.cropEl.addEventListener('change', () => void this.submit());
+    this.switchEl.addEventListener('change', () => void this.submit('switch'));
+    this.cropEl.addEventListener('change', () => void this.submit('crop'));
 
     this.root.querySelector('[data-close]')!.addEventListener('click', () => this.hide());
     // The one control that is reachable without opening anything: the farm is
@@ -188,7 +251,21 @@ export class IdlePanel {
     this.root.querySelector('[data-stop]')!.addEventListener('click', () => void this.stop());
 
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && this.open) this.hide();
+      if (event.key !== 'Escape' || !this.open) return;
+      /*
+       * Consume the press (T-18.13, BUG-11). Phaser's keyboard plugin listens
+       * on `window`; these panels listen on `document`, which is the last hop
+       * before it — so stopping here is what keeps one Escape to one layer.
+       * Without it, closing this panel ALSO ran the Interior scene's handler
+       * and walked the player out of the house in the same press.
+       *
+       * `stopPropagation`, not `stopImmediatePropagation`: the other panels'
+       * listeners are on this same node and are harmless (each checks its own
+       * `open`), and silencing them would make this depend on registration
+       * order, which is the thing that made the bug hard to see.
+       */
+      event.stopPropagation();
+      this.hide();
     });
 
     return this.root;
@@ -207,7 +284,8 @@ export class IdlePanel {
     this.setOpen(true);
   }
 
-  private hide(): void {
+  /** Public since T-18.13: `hud.closePanels()` shuts everything on a scene change. */
+  hide(): void {
     this.setOpen(false);
   }
 
@@ -240,20 +318,39 @@ export class IdlePanel {
   /** The banner's Stop, and anything else that wants idle off now. */
   private async stop(): Promise<void> {
     this.switchEl.checked = false;
-    await this.submit();
+    // 'switch' because that is what Stop is: the same control, one click away.
+    await this.submit('switch');
   }
 
-  private async submit(): Promise<void> {
+  private async submit(source: IdleSource): Promise<void> {
     if (this.inFlight) return;
-    this.inFlight = true;
 
-    const body = idleBody({
-      enabled: this.switchEl.checked,
-      tasks: [...this.taskEls]
-        .filter(([, box]) => box.checked)
-        .map(([task]) => task),
-      cropId: this.cropEl.value === NO_CROP ? null : this.cropEl.value,
-    });
+    const change = idleChange(
+      {
+        enabled: this.switchEl.checked,
+        tasks: [...this.taskEls].filter(([, box]) => box.checked).map(([task]) => task),
+        cropId: this.cropEl.value === NO_CROP ? null : this.cropEl.value,
+      },
+      source,
+    );
+
+    /*
+     * Refused before anything goes out (T-18.07). `render()` puts the box the
+     * player just cleared back, exactly the way the catch below puts the
+     * controls back after a server refusal — one way to undo a change, whether
+     * this side or the far side said no.
+     */
+    if (change.kind === 'refuse') {
+      this.render();
+      this.host.toast(change.message, 'error');
+      return;
+    }
+
+    this.inFlight = true;
+    const body = idleBody(change.form);
+    // The chores may have been filled in for the player; show what is being
+    // sent before the round trip, not after.
+    for (const [task, box] of this.taskEls) box.checked = body.tasks.includes(task);
 
     try {
       const saved = await setIdle(body);

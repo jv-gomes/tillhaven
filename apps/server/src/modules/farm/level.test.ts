@@ -7,6 +7,7 @@ import {
   FARM_LEVEL_XP,
   MAX_FARM_LEVEL,
   TRADE_MIN_FARM_LEVEL,
+  XP_PER_UNIT_MS,
   levelForXp,
   levelProgress,
   xpForCollect,
@@ -111,16 +112,79 @@ describe('what earns experience', () => {
    * The load-bearing property: experience is bought with TIME, never with gold.
    * A funded scammer must not be able to mint an eligible account on demand.
    */
-  it('pays for the wait, so every crop is worth roughly the same per hour', () => {
-    const perHour = CROP_IDS.map((id) => {
-      const crop = CROPS[id];
-      return (xpForHarvest(id) * 3_600_000) / crop.growthDurationMs;
-    });
+  const IDEAL_XP_PER_HOUR = 3_600_000 / XP_PER_UNIT_MS;
 
-    const slowest = Math.min(...perHour);
-    const fastest = Math.max(...perHour);
-    // Within a hair of each other: no crop is "the levelling crop".
-    expect(fastest / slowest).toBeLessThan(1.1);
+  const xpPerHour = (id: string): number =>
+    (xpForHarvest(id) * 3_600_000) / CROPS[id as keyof typeof CROPS].growthDurationMs;
+
+  /**
+   * **The asymmetry here is the whole security property, and T-31.04 is what
+   * exposed it.**
+   *
+   * This test used to assert `fastest / slowest < 1.1` — that every crop was
+   * worth the same XP per hour to within a hair. That held while every crop's
+   * duration was a whole multiple of `XP_PER_UNIT_MS` (5 minutes). Parsnip is
+   * 12 minutes, so `floor(12 / 5)` pays 2 XP where the ideal is 2.4, and the
+   * ratio went to 1.2.
+   *
+   * Tightening parsnip to 15 minutes would have restored the old test and
+   * would have been the wrong fix, because **the two directions are not
+   * equally dangerous.** Rounding DOWN costs a player a fraction of an XP;
+   * they level slightly slower on a 12-minute crop, which is a balance
+   * detail. Rounding UP is an exploit: `config/level.ts` is explicit that XP
+   * exists primarily as the anti-alt control behind `TRADE_MIN_FARM_LEVEL`,
+   * so a crop that pays more XP per hour than the norm is a crop that mints
+   * trade-eligible alt accounts faster.
+   *
+   * So the ceiling is hard and the floor is loose.
+   */
+  it('no crop pays more experience per hour than the wait is worth', () => {
+    const above = CROP_IDS.filter((id) => xpPerHour(id) > IDEAL_XP_PER_HOUR).map(
+      (id) => `${id} at ${xpPerHour(id).toFixed(2)} XP/hr`,
+    );
+
+    expect(
+      above,
+      `no crop may beat ${IDEAL_XP_PER_HOUR} XP/hr — that would be the levelling crop, ` +
+        'and levelling is what gates trading',
+    ).toEqual([]);
+  });
+
+  it('no crop is a dead end for levelling either', () => {
+    // Loose, unlike the ceiling: a sub-unit crop losing a fraction to `floor`
+    // is fine, a crop worth a third of the norm would be a trap.
+    for (const id of CROP_IDS) {
+      expect(xpPerHour(id), `${id} levels far too slowly`).toBeGreaterThan(
+        IDEAL_XP_PER_HOUR * 0.75,
+      );
+    }
+  });
+
+  /**
+   * **The cliff the ceiling above exists to catch, stated directly.**
+   *
+   * `xpForDuration` is `max(1, floor(ms / XP_PER_UNIT_MS))`, and that `max(1,
+   * ...)` is a floor on the AWARD, not on the rate. A crop shorter than
+   * `XP_PER_UNIT_MS` still pays a whole XP — so a 1-minute crop would pay 60
+   * XP/hr against the norm's 12, five times the rate, and a scammer would
+   * plant nothing else.
+   *
+   * Nothing in the shipped table is close (parsnip, the shortest, is 12
+   * minutes), but T-31.05 is about to add a deliberately fast starter crop and
+   * D-18's brief says "sub-15-minute". This pins the actual boundary so that
+   * task hits a failing test rather than a live exploit: **no crop may be
+   * shorter than `XP_PER_UNIT_MS`.**
+   */
+  it('no crop is shorter than one unit of experience', () => {
+    const tooFast = CROP_IDS.filter(
+      (id) => CROPS[id].growthDurationMs < XP_PER_UNIT_MS,
+    ).map((id) => `${id} at ${CROPS[id].growthDurationMs / 60_000}m`);
+
+    expect(
+      tooFast,
+      `a crop under ${XP_PER_UNIT_MS / 60_000} minutes still pays a whole XP, so it beats ` +
+        'every other crop on XP per hour — see xpForDuration',
+    ).toEqual([]);
   });
 
   it('grants at least one experience for any crop', () => {

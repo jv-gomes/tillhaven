@@ -1,8 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { buyAnimalSchema, collectAnimalSchema, feedAnimalSchema } from '@tillhaven/shared';
+import {
+  buyAnimalSchema,
+  collectAllSchema,
+  collectAnimalSchema,
+  feedAnimalSchema,
+} from '@tillhaven/shared';
 import { requireAuth, currentPlayer } from '../../middleware/auth.js';
 import { runIdempotent } from '../../lib/idempotency.js';
-import { buyAnimal, collect, feed } from './service.js';
+import { buyAnimal, collect, collectAll, feed } from './service.js';
 
 /**
  * Animal routes. Parse, authorize, call, respond (CLAUDE.md §10).
@@ -39,6 +44,26 @@ export async function animalRoutes(app: FastifyInstance): Promise<void> {
 
       return runIdempotent(player.id, input.idempotencyKey, 'animals.collect', now, (tx) =>
         collect(tx, player, input.animalId, now),
+      );
+    },
+  );
+
+  /**
+   * One press does the work of up to a full barn and coop, so the limit is
+   * deliberately much tighter than `/collect`'s — a batched endpoint that kept
+   * the per-action budget would be a cheaper way to hammer the database than
+   * the endpoint it batches.
+   */
+  app.post(
+    '/collect-all',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) => {
+      const player = currentPlayer(request);
+      const input = collectAllSchema.parse(request.body);
+      const now = Date.now();
+
+      return runIdempotent(player.id, input.idempotencyKey, 'animals.collectAll', now, (tx) =>
+        collectAll(tx, player, now),
       );
     },
   );

@@ -22,6 +22,17 @@ export interface CollectResult {
   readonly animalId: string;
   readonly itemId: string;
   readonly quantity: number;
+  /**
+   * Lifetime experience after this collection, and the level it derives to
+   * (T-30.04).
+   *
+   * The **third** place this same omission was found: the server has returned
+   * both since T-2.09 (`modules/animals/service.ts`), and this type not
+   * declaring them is the only reason the client never saw them. Same fix as
+   * `HarvestResult` in T-30.02 — a declaration, not a feature.
+   */
+  readonly experience: number;
+  readonly farmLevel: number;
 }
 
 export interface FeedResult {
@@ -44,4 +55,20 @@ export function collectAnimal(animalId: string, key = idempotencyKey()): Promise
 
 export function feedAnimal(animalId: string, key = idempotencyKey()): Promise<FeedResult> {
   return api.post<FeedResult>('/animals/feed', { animalId, idempotencyKey: key });
+}
+
+export interface CollectAllResult {
+  readonly collected: readonly CollectResult[];
+  /** Produce was left with its animal because the bag filled (T-24.02). */
+  readonly stoppedByFullBag: boolean;
+  /** True when the batch stopped because the farmer ran out of energy. */
+  readonly stoppedByEnergy: boolean;
+}
+
+/**
+ * Collects from every ready animal — the VIP `autoCollect` benefit (T-24.02).
+ * No animal list, for the same reason `harvestAll` sends no plot list.
+ */
+export function collectAllAnimals(key = idempotencyKey()): Promise<CollectAllResult> {
+  return api.post<CollectAllResult>('/animals/collect-all', { idempotencyKey: key });
 }

@@ -21,9 +21,20 @@
  *     top edge — the opposite convention from (2), in the same file.
  */
 
-import type { MapDoc, PlacedObject, PlotCell } from '../model/doc.js';
+import type { AnimCell, CollisionCell, MapDoc, PlacedObject, PlotCell } from '../model/doc.js';
 import { createDoc, createTileLayer } from '../model/doc.js';
-import { TILESET_RUNS, fromGid } from '@tillhaven/shared/config';
+import {
+  ANIM_ID_PROPERTY,
+  ANIM_LAYER_NAME,
+  ANIM_OBJECT_TYPE,
+  COLLISION_LAYER_NAME,
+  COLLISION_MASK_PROPERTY,
+  COLLISION_OBJECT_TYPE,
+  TILESET_RUNS,
+  cellsToTileMasks,
+  fromGid,
+  tileMaskToCells,
+} from '@tillhaven/shared/config';
 
 export const TILED_VERSION = '1.10';
 export const TILED_EDITOR_VERSION = '1.10.2';
@@ -100,6 +111,9 @@ export interface TiledMap {
 
 export const PLOT_LAYER_NAME = 'plots';
 export const PLOT_OBJECT_TYPE = 'plot';
+// Re-exported rather than redeclared: the names live in shared config because
+// the Farm scene reads them too (see `groundAnim.ts` and `collision.ts`).
+export { ANIM_LAYER_NAME, ANIM_OBJECT_TYPE, COLLISION_LAYER_NAME, COLLISION_OBJECT_TYPE };
 
 /**
  * Every manifest tileset is embedded, used or not, in a fixed order. That keeps
@@ -160,6 +174,84 @@ export function serialize(doc: MapDoc): TiledMap {
           height: o.h,
           rotation: 0,
           visible: true,
+        };
+      });
+      layers.push({
+        id: layerId++,
+        name: layer.name,
+        type: 'objectgroup',
+        visible: layer.visible,
+        opacity: layer.opacity,
+        x: 0,
+        y: 0,
+        draworder: 'topdown',
+        objects,
+      });
+    } else if (layer.kind === 'collision') {
+      /*
+       * Authored collision, one rectangle per TILE carrying its nine cells as a
+       * mask string.
+       *
+       * Cell-sized rectangles would put 5.33 repeating in every coordinate of
+       * the file; a tile is a whole number of pixels. The mask reads the way
+       * every other mask in the codebase reads, so the same eyes work on both.
+       */
+      const masks = cellsToTileMasks(layer.cells);
+      const objects = masks.map((entry, index): TiledObject => {
+        const id = 300000 + index;
+        maxObjectId = Math.max(maxObjectId, id);
+        return {
+          id,
+          name: COLLISION_OBJECT_TYPE,
+          type: COLLISION_OBJECT_TYPE,
+          x: entry.x * doc.tileWidth,
+          y: entry.y * doc.tileHeight,
+          width: doc.tileWidth,
+          height: doc.tileHeight,
+          rotation: 0,
+          visible: true,
+          properties: [{ name: COLLISION_MASK_PROPERTY, type: 'string', value: entry.mask }],
+        };
+      });
+      layers.push({
+        id: layerId++,
+        name: layer.name,
+        type: 'objectgroup',
+        visible: layer.visible,
+        opacity: layer.opacity,
+        x: 0,
+        y: 0,
+        draworder: 'topdown',
+        objects,
+      });
+    } else if (layer.kind === 'anim') {
+      /*
+       * Animated ground, as plain rectangles carrying an `animId` (the third
+       * authored thing, after tiles and plots).
+       *
+       * Same shape as the plot layer and for the same reason: no gid, so `y` is
+       * the TOP edge — the opposite convention from a tile-object, in the same
+       * file. What the animation *is* lives in `GROUND_ANIMATIONS`; the map
+       * records only where it goes, so re-timing one is a config edit rather
+       * than a map regeneration.
+       *
+       * Ids start above the plot range so the three object layers never collide
+       * whatever order they were edited in.
+       */
+      const objects = layer.cells.map((cell, index): TiledObject => {
+        const id = 200000 + index;
+        maxObjectId = Math.max(maxObjectId, id);
+        return {
+          id,
+          name: ANIM_OBJECT_TYPE,
+          type: ANIM_OBJECT_TYPE,
+          x: cell.x * doc.tileWidth,
+          y: cell.y * doc.tileHeight,
+          width: doc.tileWidth,
+          height: doc.tileHeight,
+          rotation: 0,
+          visible: true,
+          properties: [{ name: ANIM_ID_PROPERTY, type: 'string', value: cell.animId }],
         };
       });
       layers.push({
@@ -277,6 +369,69 @@ export function deserialize(map: TiledMap): DeserializeResult {
     }
 
     const objects = layer.objects ?? [];
+
+    /*
+     * Named OR typed, like the plot branch below: a hand-renamed layer whose
+     * objects still declare their type should still come back as animations.
+     */
+    const isCollision =
+      layer.name === COLLISION_LAYER_NAME ||
+      (objects.length > 0 && objects.every((o) => o.type === COLLISION_OBJECT_TYPE));
+
+    if (isCollision) {
+      const cells: CollisionCell[] = [];
+      for (const o of objects) {
+        const mask = propertyValue(o, COLLISION_MASK_PROPERTY);
+        if (typeof mask !== 'string') continue;
+        cells.push(
+          ...tileMaskToCells(
+            Math.round(o.x / map.tilewidth),
+            Math.round(o.y / map.tileheight),
+            mask,
+          ),
+        );
+      }
+
+      doc.layers.push({
+        kind: 'collision',
+        id: layer.name,
+        name: layer.name,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        cells,
+      });
+      continue;
+    }
+
+    const isAnim =
+      layer.name === ANIM_LAYER_NAME ||
+      (objects.length > 0 && objects.every((o) => o.type === ANIM_OBJECT_TYPE));
+
+    if (isAnim) {
+      const cells: AnimCell[] = [];
+      for (const o of objects) {
+        const animId = propertyValue(o, ANIM_ID_PROPERTY);
+        // A placement with no id names no animation and would draw nothing.
+        // Dropping it is better than carrying an empty cell that looks placed.
+        if (typeof animId !== 'string' || animId === '') continue;
+        cells.push({
+          x: Math.round(o.x / map.tilewidth),
+          y: Math.round(o.y / map.tileheight),
+          animId,
+        });
+      }
+
+      doc.layers.push({
+        kind: 'anim',
+        id: layer.name,
+        name: layer.name,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        cells,
+      });
+      continue;
+    }
+
     const isPlots =
       layer.name === PLOT_LAYER_NAME ||
       (objects.length > 0 && objects.every((o) => o.type === PLOT_OBJECT_TYPE));

@@ -18,6 +18,9 @@ import {
   ANIMAL_BUILDINGS,
   BUILDING_TIERS,
   ErrorCode,
+  CROPS,
+  CROP_IDS,
+  FARM_LEVEL_XP,
   type AnimalBuilding,
 } from '@tillhaven/shared';
 
@@ -106,9 +109,15 @@ describe('POST /api/shop/buy', () => {
     expect(await held('potato_seeds')).toBe(3);
   });
 
+  /*
+   * `potato_seeds` rather than `onion_seeds` since T-31.06: onion is now gated
+   * behind farm level 7, so a brand-new account is refused `SEED_LOCKED`
+   * before the gold check is ever reached and this test would have been
+   * asserting the wrong refusal. The level gate has its own tests below.
+   */
   it('refuses when the player cannot afford it, changing nothing', async () => {
     const res = await client.post('/api/shop/buy', {
-      itemId: 'onion_seeds',
+      itemId: 'potato_seeds',
       quantity: 9999,
       idempotencyKey: newKey(),
     });
@@ -116,7 +125,7 @@ describe('POST /api/shop/buy', () => {
     expect(res.status).toBe(409);
     expect(res.code).toBe('INSUFFICIENT_GOLD');
     expect(await gold()).toBe(STARTING_GOLD);
-    expect(await held('onion_seeds')).toBe(0);
+    expect(await held('potato_seeds')).toBe(0);
   });
 
   it('refuses to sell something that is not for sale', async () => {
@@ -226,9 +235,10 @@ describe('POST /api/shop/buy', () => {
    * so both read the original balance and gold goes negative.
    */
   it('cannot overspend by racing two purchases', async () => {
-    const price = ITEMS['onion_seeds']!.shopBuyPrice!;
+    // Level 1, like every seed used in a test that is not about the gate.
+    const price = ITEMS['potato_seeds']!.shopBuyPrice!;
     const affordable = Math.floor(STARTING_GOLD / price);
-    await give('onion_seeds', 1);
+    await give('potato_seeds', 1);
 
     let openGate = (): void => {};
     const gateReleased = new Promise<void>((resolve) => {
@@ -246,8 +256,8 @@ describe('POST /api/shop/buy', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     const purchases = Promise.all([
-      client.post('/api/shop/buy', { itemId: 'onion_seeds', quantity: affordable, idempotencyKey: newKey('ra') }),
-      client.post('/api/shop/buy', { itemId: 'onion_seeds', quantity: affordable, idempotencyKey: newKey('rb') }),
+      client.post('/api/shop/buy', { itemId: 'potato_seeds', quantity: affordable, idempotencyKey: newKey('ra') }),
+      client.post('/api/shop/buy', { itemId: 'potato_seeds', quantity: affordable, idempotencyKey: newKey('rb') }),
     ]);
 
     // Both are now in flight and contending for the same row.
@@ -261,7 +271,154 @@ describe('POST /api/shop/buy', () => {
     // Gold can never go negative, whatever the interleaving.
     expect(await gold()).toBeGreaterThanOrEqual(0);
     expect(await gold()).toBe(STARTING_GOLD - price * affordable);
-    expect(await held('onion_seeds')).toBe(affordable + 1);
+    expect(await held('potato_seeds')).toBe(affordable + 1);
+  });
+});
+
+/**
+ * The farm-level gate on seeds (T-31.06).
+ *
+ * **The first thing in the game farm level is spent on.** Until now it was
+ * earned, shown, and read for exactly one purpose — the trade gate. So these
+ * tests are about the same property `config/level.ts` cares about: the level
+ * is DERIVED from experience, and the only way past a gate is to have earned
+ * it. Nothing in a request body may move it.
+ */
+describe('POST /api/shop/buy — the farm-level gate', () => {
+  /** Sets lifetime experience directly, which is what the level derives from. */
+  async function setExperience(xp: number): Promise<void> {
+    await db
+      .update(schema.players)
+      .set({ experience: xp })
+      .where(eq(schema.players.id, playerId));
+  }
+
+  it('refuses a seed the farm has not reached the level for', async () => {
+    const res = await client.post('/api/shop/buy', {
+      // Cabbage is the deepest unlock in the Spring-only table (level 9).
+      itemId: 'cabbage_seeds',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.code).toBe('SEED_LOCKED');
+    expect(await gold()).toBe(STARTING_GOLD);
+    expect(await held('cabbage_seeds')).toBe(0);
+  });
+
+  /**
+   * The refusal must come from the LEVEL, not from the wallet. A rich level-1
+   * account is the case a "can they afford it" check would wave through.
+   */
+  it('refuses a locked seed even to a player who can easily afford it', async () => {
+    await db
+      .update(schema.players)
+      .set({ gold: 1_000_000 })
+      .where(eq(schema.players.id, playerId));
+
+    const res = await client.post('/api/shop/buy', {
+      itemId: 'onion_seeds',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.code).toBe('SEED_LOCKED');
+    expect(await gold()).toBe(1_000_000);
+  });
+
+  it('names the level required and the level held, so the client can explain it', async () => {
+    const res = await client.post('/api/shop/buy', {
+      itemId: 'onion_seeds',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.body.error.details).toMatchObject({
+      itemId: 'onion_seeds',
+      requiredLevel: CROPS.onion.unlockLevel,
+      level: 1,
+    });
+  });
+
+  it('sells the same seed once the experience has actually been earned', async () => {
+    await setExperience(FARM_LEVEL_XP[CROPS.onion.unlockLevel - 1]!);
+
+    const res = await client.post('/api/shop/buy', {
+      itemId: 'onion_seeds',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await held('onion_seeds')).toBe(1);
+  });
+
+  /**
+   * One XP short must still be refused. The off-by-one here is the difference
+   * between a gate and a suggestion, and `levelForXp` walks a table rather
+   * than doing arithmetic precisely so this boundary is exact.
+   */
+  it('refuses one experience point short of the requirement', async () => {
+    await setExperience(FARM_LEVEL_XP[CROPS.onion.unlockLevel - 1]! - 1);
+
+    const res = await client.post('/api/shop/buy', {
+      itemId: 'onion_seeds',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.code).toBe('SEED_LOCKED');
+  });
+
+  it('gates nothing that is not a seed', async () => {
+    const res = await client.post('/api/shop/buy', {
+      itemId: 'chicken_feed',
+      quantity: 1,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  /**
+   * **Selling is never gated.** A milestone can hand a level-1 player potato
+   * seeds, and the crops they grow have to be sellable — a level gate on the
+   * SELL side would strand produce in a bag with no way to turn it into gold.
+   */
+  it('never gates selling produce from a crop the player could not buy', async () => {
+    await give('onion', 3);
+
+    const res = await client.post('/api/shop/sell', {
+      itemId: 'onion',
+      quantity: 3,
+      idempotencyKey: newKey(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await held('onion')).toBe(0);
+  });
+
+  /**
+   * The catalogue tells the client WHY a row is dead, and gets it from the
+   * same config the gate reads. It deliberately does NOT hide locked rows: a
+   * shop that silently omits two thirds of its stock tells a new player the
+   * game has seven crops.
+   */
+  it('lists locked seeds, with the level they need', async () => {
+    const res = await client.get('/api/shop');
+    const rows = new Map<string, { unlockLevel: number | null }>(
+      res.body.items.map((e: { itemId: string; unlockLevel: number | null }) => [e.itemId, e]),
+    );
+
+    for (const id of CROP_IDS) {
+      const seed = CROPS[id].seedItemId;
+      expect(rows.has(seed), `${seed} is missing from the catalogue`).toBe(true);
+      expect(rows.get(seed)!.unlockLevel, seed).toBe(CROPS[id].unlockLevel);
+    }
+    expect(rows.get('chicken_feed')!.unlockLevel, 'feed is not a seed').toBeNull();
   });
 });
 

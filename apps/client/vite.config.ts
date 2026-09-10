@@ -2,8 +2,8 @@ import { defineConfig, type Plugin } from 'vite';
 import { resolve } from 'node:path';
 
 /**
- * Multi-page app. Four HTML entries, one per route (CLAUDE.md §2 — no heavy
- * framework for the canvas; Phaser only loads on /play).
+ * Multi-page app. One HTML entry per route (CLAUDE.md §2 — no heavy framework
+ * for the canvas; Phaser only loads on /play).
  */
 const PAGES = {
   index: 'index.html',
@@ -12,6 +12,7 @@ const PAGES = {
   play: 'play.html',
   terms: 'terms.html',
   privacy: 'privacy.html',
+  credits: 'credits.html',
 } as const;
 
 /**
@@ -30,6 +31,7 @@ function extensionlessRoutes(): Plugin {
     ['/play', '/play.html'],
     ['/terms', '/terms.html'],
     ['/privacy', '/privacy.html'],
+    ['/credits', '/credits.html'],
   ]);
 
   return {
@@ -56,6 +58,28 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: false,
+      },
+      /*
+       * The realtime socket (T-22.04). `ws: true` is the whole point — this is
+       * a WebSocket upgrade, not a request.
+       *
+       * **Its absence failed silently, which is why it lasted this long.**
+       * `net/realtime.ts` calls `io()` with no URL, so the socket connects to
+       * the page's own origin — :5173 in dev, where Vite answered
+       * `/socket.io/` with its HTML fallback. Socket.IO got **200 OK and a page
+       * of HTML** where a handshake should be, could not parse it, and retried
+       * forever in polling mode. A 404 would have been noisy; a 200 was not,
+       * and the console stayed clean while the trade panel quietly ran on its
+       * 8-second fallback poll.
+       *
+       * Production has never had the problem — Fastify serves the client and
+       * the socket from one origin — which is exactly why nothing caught it.
+       * `src/net/devProxy.test.ts` is the guard.
+       */
+      '/socket.io': {
+        target: 'http://localhost:3000',
+        changeOrigin: false,
+        ws: true,
       },
     },
   },

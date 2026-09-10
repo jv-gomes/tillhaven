@@ -8,13 +8,17 @@ build/
 .env.*
 !.env.example
 
-# Generated: produced by `pnpm assets` from the sources in /new_assets
+# Generated: produced by `pnpm assets` from the sources in /assets
 apps/client/public/assets/
 
 # Licensed asset pack (EmanuelleDev) — redistribution forbidden, so it must
 # never be committed. See ATTRIBUTION.md. A fresh clone needs the pack copied
 # in manually before `pnpm assets` can run.
-new_assets/
+#
+# It lived at `new_assets/` until the pack was reorganised; `assets/` is now
+# the pack itself, NOT the v1 art T-7.07 deleted. Getting this line wrong
+# publishes licensed art, so it is worth the paragraph.
+assets/
 
 .DS_Store
 *.log

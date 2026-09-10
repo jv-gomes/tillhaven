@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { CROP_IDS, IDLE_TASK_TYPES } from '@tillhaven/shared/config';
-import { idleBody } from './idlePanel.js';
+import { idleSettingsSchema } from '@tillhaven/shared/schemas';
+import { idleBody, idleChange, type IdleForm } from './idlePanel.js';
 
 /**
  * What the idle switch actually sends (T-13.06).
@@ -44,9 +45,12 @@ describe('idleBody', () => {
   });
 
   it('drops anything that is not a task this build knows', () => {
+    // `'chop'` was one of the rejects until T-20.06 made it a real chore. It is
+    // kept here as an ACCEPTED value so the test still proves the filter passes
+    // what it should as well as dropping what it should.
     const body = idleBody({ enabled: true, tasks: ['till', 'chop', 'mine'], cropId: null });
 
-    expect(body.tasks).toEqual(['till']);
+    expect(body.tasks).toEqual(['till', 'chop']);
   });
 
   it('carries the chosen crop through', () => {
@@ -76,5 +80,128 @@ describe('idleBody', () => {
     expect(body.enabled).toBe(false);
     expect(body.tasks).toEqual(['till', 'water']);
     expect(body.cropId).toBe(CROP);
+  });
+});
+
+/**
+ * T-18.07 (BUG-09) — the switch cannot be turned on into a state that does
+ * nothing.
+ *
+ * `enabled` with an empty chore list took the farm away from the player
+ * (movement and the action key are gated on `enabled` alone) and gave back a
+ * farmer with nothing in its task list. `idleSettingsSchema` refuses the pair
+ * outright now; this is the panel's half, which is about never producing it in
+ * the first place and saying why when the player reaches for it.
+ */
+describe('idleChange', () => {
+  const form = (over: Partial<IdleForm> = {}): IdleForm => ({
+    enabled: true,
+    tasks: [],
+    cropId: null,
+    ...over,
+  });
+
+  it('fills in every chore when the switch goes on with none ticked', () => {
+    const change = idleChange(form({ cropId: CROP }), 'switch');
+
+    expect(change.kind).toBe('send');
+    expect(change.kind === 'send' && change.form.tasks).toEqual([...IDLE_TASK_TYPES]);
+  });
+
+  /**
+   * Found in the browser, not here: the endpoint refuses `plant` without a
+   * `cropId` (`IDLE_CROP_REQUIRED`), so a default of all four made the switch
+   * fail with a red toast for anyone who had not already chosen a crop —
+   * which is everyone, the first time. Two rules that are each right and whose
+   * intersection was not considered.
+   */
+  it('leaves planting out of the default when no crop is chosen', () => {
+    const change = idleChange(form(), 'switch');
+
+    expect(change.kind === 'send' && change.form.tasks).toEqual(
+      IDLE_TASK_TYPES.filter((t) => t !== 'plant'),
+    );
+    expect(change.kind === 'send' && change.form.tasks.length).toBeGreaterThan(0);
+  });
+
+  it('never defaults to a body the endpoint would refuse', () => {
+    // The pairing that matters: sowing implies a crop, at every entry point
+    // that can fill the list in.
+    for (const cropId of [null, '', 'moon-wheat', CROP]) {
+      for (const source of ['switch', 'crop'] as const) {
+        const change = idleChange(form({ cropId }), source);
+        const body = idleBody((change as { form: IdleForm }).form);
+        if (body.tasks.includes('plant')) {
+          expect(body.cropId, `${source} / ${cropId}`).not.toBeNull();
+        }
+        expect(body.tasks.length, `${source} / ${cropId}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('refuses to let the last chore be unticked while the farmer works', () => {
+    const change = idleChange(form(), 'tasks');
+
+    expect(change.kind).toBe('refuse');
+    // The message has to offer the way out, or the player is told "no" with
+    // nothing to do about it — idle is still on and still doing nothing.
+    expect(change.kind === 'refuse' && change.message).toMatch(/turn idle off/i);
+  });
+
+  it('leaves a chosen chore list exactly as it is', () => {
+    for (const source of ['switch', 'tasks', 'crop'] as const) {
+      const change = idleChange(form({ tasks: ['water'] }), source);
+      expect(change.kind === 'send' && change.form.tasks, source).toEqual(['water']);
+    }
+  });
+
+  /**
+   * Switching OFF with nothing ticked is ordinary — a farmer that is not
+   * working needs no chores — and it must not be reinterpreted as "work on
+   * everything", which would turn the Stop button into a Start button.
+   */
+  it('never fills in chores while the switch is off', () => {
+    for (const source of ['switch', 'tasks', 'crop'] as const) {
+      const change = idleChange(form({ enabled: false }), source);
+      expect(change.kind, source).toBe('send');
+      expect(change.kind === 'send' && change.form.tasks, source).toEqual([]);
+    }
+  });
+
+  /**
+   * A farm already carrying the bad state from before this rule: the player
+   * opens the panel, sees the switch on with nothing ticked, and changes the
+   * crop. Refusing that would strand them; filling the chores in is the same
+   * reading the switch takes.
+   */
+  it('rescues a legacy enabled-with-no-chores farm from the crop dropdown', () => {
+    const change = idleChange(form({ cropId: CROP }), 'crop');
+
+    expect(change.kind).toBe('send');
+    expect(change.kind === 'send' && change.form.tasks).toEqual([...IDLE_TASK_TYPES]);
+    expect(change.kind === 'send' && change.form.cropId).toBe(CROP);
+  });
+
+  /** The body built from a filled-in form is one the endpoint now accepts. */
+  it('produces a body the schema will take', () => {
+    const change = idleChange(form({ cropId: CROP }), 'switch');
+    const parsed = idleSettingsSchema.safeParse({
+      ...idleBody((change as { form: IdleForm }).form),
+      idempotencyKey: '11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  /** ...and the state this task removed is one it will not. */
+  it('describes a state the schema refuses, which is the point', () => {
+    const parsed = idleSettingsSchema.safeParse({
+      enabled: true,
+      tasks: [],
+      cropId: null,
+      idempotencyKey: '11111111-1111-4111-8111-111111111111',
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });

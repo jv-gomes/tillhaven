@@ -34,6 +34,37 @@ export const IdleTask = {
   PLANT: 'plant',
   WATER: 'water',
   HARVEST: 'harvest',
+  /*
+   * Chopping (T-20.06), and the first idle task that does not address a plot.
+   *
+   * §5.3 always said this list was "designed to grow into chop/mine later", and
+   * this is the growth — but it is not quite the "one more branch" the comment
+   * above promises: a tree is a different entity with a different clock, so the
+   * simulator carries trees alongside plots and `SimAction` gained a `treeId`.
+   * Mining would now be genuinely one more branch; this one paid to widen the
+   * road.
+   */
+  CHOP: 'chop',
+
+  /*
+   * **Fishing is deliberately NOT here** (T-34.08), and this is where the
+   * decision lives because this is where somebody would add it.
+   *
+   * §1's pillar is that progress continues while the player is away; the
+   * gameplay overhaul's premise is that **active play is where depth lives**.
+   * Idle mode runs the farm LOOP — the four verbs that are the same work every
+   * time, plus chopping, which is a timer with an axe attached. Fishing is the
+   * first mechanic in this game that rewards *attention*: the bite is drawn per
+   * cast and the reel is judged against a two-second window. An idle farmer
+   * fishing would either miss every cast (pointless) or land every one
+   * (the minigame deleted, and the best income in the game handed to the tab
+   * nobody is looking at).
+   *
+   * `idle.test.ts` asserts this rather than a comment doing it, which is the
+   * point: adding `FISH: 'fish'` above would be a one-line change that reads as
+   * an obvious omission being fixed, and it must instead fail a test with the
+   * reason attached.
+   */
 } as const;
 export type IdleTask = (typeof IdleTask)[keyof typeof IdleTask];
 

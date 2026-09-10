@@ -26,6 +26,16 @@ export interface AuthedPlayer {
    * and is never stored — see modules/farm/level.ts for why.
    */
   readonly experience: number;
+  /**
+   * Energy spent since the last rest, and when sleep began (MVP re-scope).
+   *
+   * Carried on the session player because **every mutating farm action has to
+   * check them**, and the alternative is a second query on the hottest write
+   * path in the game. What is LEFT is derived from these two plus the farm
+   * level (`energyStateAt`), never stored.
+   */
+  readonly energySpent: number;
+  readonly sleepingSince: number | null;
   readonly vipUntil: number | null;
   /** Set on refund or chargeback. Blocks VIP benefits and trading (§7). */
   readonly flaggedAt: number | null;
@@ -63,6 +73,8 @@ export async function attachPlayer(request: FastifyRequest): Promise<void> {
       gold: schema.players.gold,
       backpackTier: schema.players.backpackTier,
       experience: schema.players.experience,
+      energySpent: schema.players.energySpent,
+      sleepingSince: schema.players.sleepingSince,
       vipUntil: schema.players.vipUntil,
       flaggedAt: schema.players.flaggedAt,
       createdAt: schema.players.createdAt,

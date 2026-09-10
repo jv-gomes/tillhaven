@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CROPS, CROP_IDS, ITEMS, MINUTE } from '@tillhaven/shared/config';
+import { CROPS, CROP_IDS, ITEMS, ItemCategory, MINUTE } from '@tillhaven/shared/config';
 import type { IdleSummaryView } from '@tillhaven/shared/types';
 import { IDLE_SUMMARY_MIN_GAP_MS, idleSummaryMessage } from './idleSummary.js';
 
@@ -124,5 +124,30 @@ describe('idleSummaryMessage', () => {
 
   it('ignores a harvest recorded as zero', () => {
     expect(idleSummaryMessage(summary({ harvested: { leek: 0 } }))).toBeNull();
+  });
+});
+
+/**
+ * T-20.06 — the verb follows the item, not the field name.
+ *
+ * `summary.harvested` is "what landed in the bag", and idle chopping put wood
+ * in it alongside crops. The loop said "picked" for everything, which read as
+ * *"picked 15 × Wood"* in the browser.
+ */
+describe('idleSummaryMessage — materials', () => {
+  it('says chopped for a material and picked for a crop', () => {
+    const message = idleSummaryMessage(
+      summary({ harvested: { wood: 15, [CROP.produceItemId]: 4 } }),
+    );
+
+    expect(message).toContain('chopped 15 × Wood');
+    expect(message).toContain(`picked 4 × ${ITEMS[CROP.produceItemId]!.name}`);
+  });
+
+  it('asks config rather than matching the id', () => {
+    // The rule is `category === MATERIAL`, so it holds for whatever material
+    // comes next without a second list to keep in step.
+    expect(ITEMS['wood']!.category).toBe(ItemCategory.MATERIAL);
+    expect(ITEMS[CROP.produceItemId]!.category).not.toBe(ItemCategory.MATERIAL);
   });
 });

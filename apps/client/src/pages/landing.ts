@@ -1,5 +1,6 @@
 import '../styles/base.css';
 import '../styles/landing.css';
+import { CROP_BLURBS } from './cropBlurbs.js';
 
 import {
   CROPS,
@@ -260,15 +261,9 @@ function entry(art: HTMLElement[], name: string, blurb: string): HTMLElement {
   return card;
 }
 
-const CROP_BLURBS: Readonly<Record<CropId, string>> = {
-  leek: 'The starter crop. Turns over inside a lunch break and pays for the next handful of seeds.',
-  potato: 'Plant a tray in the morning and it is done by mid-afternoon. The reliable middle of the season.',
-  strawberry: 'Two berries per plant instead of one, which is what makes the pricier seed worth it.',
-  onion: 'An overnight crop. Sow before bed, wake up to three per plot.',
-};
 
 function buildCrops(container: HTMLElement): void {
-  for (const id of CROP_IDS) {
+  for (const id of CROP_IDS.filter((cropId) => CROP_BLURBS[cropId] !== undefined)) {
     const def = CROPS[id];
     const produce = ITEMS[def.produceItemId];
     const seed = ITEMS[def.seedItemId];
@@ -279,7 +274,7 @@ function buildCrops(container: HTMLElement): void {
         sprite(def.sheet, def.stageFrames.at(-1)!, { scale: 3, title: def.name }),
       ],
       def.name,
-      CROP_BLURBS[id],
+      CROP_BLURBS[id]!,
     );
 
     const dl = el('dl', 'spec');

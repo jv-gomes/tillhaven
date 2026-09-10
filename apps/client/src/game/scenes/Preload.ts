@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { SHEETS, IMAGES, TILEMAPS, TILE_SIZE } from '@tillhaven/shared/config';
+import { SHEETS, ICON_SHEETS, IMAGES, TILEMAPS, TILE_SIZE } from '@tillhaven/shared/config';
 import { hud } from '../hud.js';
 
 /**
@@ -22,7 +22,7 @@ export class Preload extends Phaser.Scene {
   preload(): void {
     this.buildProgressUi();
 
-    for (const sheet of SHEETS) {
+    for (const sheet of [...SHEETS, ...ICON_SHEETS]) {
       this.load.spritesheet(sheet.key, sheet.path, {
         frameWidth: sheet.frameWidth,
         frameHeight: sheet.frameHeight,
@@ -58,9 +58,18 @@ export class Preload extends Phaser.Scene {
 
     this.verifyFrameCounts();
     this.verifyTilemaps();
-    this.label.setText(`Loaded  ${SHEETS.length + IMAGES.length + TILEMAPS.length} assets`);
+    this.label.setText(`Loaded  ${SHEETS.length + ICON_SHEETS.length + IMAGES.length + TILEMAPS.length} assets`);
 
     hud.mount();
+    /*
+     * A return from Stripe (T-18.20). Mounted-time rather than per-poll: the
+     * `?vip=` is on the URL exactly once, and the message is about the
+     * REDIRECT, not about the account's VIP state — which the farm poll
+     * reports on its own once the webhook has landed (§7).
+     */
+    hud.announceVipReturn(window.location.search, (path) =>
+      window.history.replaceState(null, '', path),
+    );
     this.scene.start('Farm');
   }
 
@@ -71,7 +80,9 @@ export class Preload extends Phaser.Scene {
    * garbage.
    */
   private verifyFrameCounts(): void {
-    for (const sheet of SHEETS) {
+    // Both lists: an icon sheet whose frame count is wrong renders garbage in
+    // the bag exactly as a terrain sheet renders garbage on the ground.
+    for (const sheet of [...SHEETS, ...ICON_SHEETS]) {
       const texture = this.textures.get(sheet.key);
       // Phaser counts the __BASE frame alongside the sliced ones.
       const actual = texture.frameTotal - 1;

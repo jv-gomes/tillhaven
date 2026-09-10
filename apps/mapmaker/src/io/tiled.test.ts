@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDoc, objectLayer, plotLayer, type MapDoc } from '../model/doc.js';
 import { History } from '../model/history.js';
-import { TILESET_RUNS, toGid } from '@tillhaven/shared/config';
+import { GRASS_FILL_FRAME, PATH_FILL_FRAME, TILESET_RUNS, toGid } from '@tillhaven/shared/config';
 import { placeObject } from '../tools/objects.js';
 import { togglePlot } from '../tools/plots.js';
 import { PLOT_OBJECT_TYPE, deserialize, serialize } from './tiled.js';
@@ -13,9 +13,9 @@ function populated(): MapDoc {
 
   const ground = doc.layers[0];
   if (ground?.kind === 'tile') {
-    history.setTile(ground, 0, toGid('ground-grass', 0));
+    history.setTile(ground, 0, toGid('tileset-grass-spring', GRASS_FILL_FRAME));
     history.setTile(ground, 5, toGid('tileset-grass-spring', 41));
-    history.setTile(ground, 21, toGid('ground-path', 0));
+    history.setTile(ground, 21, toGid('tileset-paths', PATH_FILL_FRAME));
   }
 
   const objects = objectLayer(doc);

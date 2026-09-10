@@ -84,13 +84,24 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    * Idempotent, and deliberately not behind requireAuth: signing out of an
    * already-dead session should succeed quietly, not 401.
    */
-  app.post('/logout', async (request, reply) => {
-    const raw = request.cookies[SESSION_COOKIE];
-    if (raw) await revokeSession(raw, Date.now());
+  app.post(
+    '/logout',
+    /*
+     * The only mutating route without its own limit until T-14.07's audit, and
+     * the loosest one deliberately: it is unauthenticated by design (above), it
+     * writes one `revoked_at`, and it takes something AWAY from the caller. A
+     * tight limit here would mostly get in the way of a browser retrying. The
+     * global backstop covers the flooding case.
+     */
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const raw = request.cookies[SESSION_COOKIE];
+      if (raw) await revokeSession(raw, Date.now());
 
-    clearSessionCookie(reply);
-    return reply.send({ ok: true });
-  });
+      clearSessionCookie(reply);
+      return reply.send({ ok: true });
+    },
+  );
 
   /** Who am I. The client calls this on boot to decide what to render. */
   app.get('/me', { preHandler: requireAuth }, async (request) => {

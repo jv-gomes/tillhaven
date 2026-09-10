@@ -4,44 +4,47 @@
     "name": "Water (flat)",
     "tilesetKey": "water-tile",
     "block": 0,
-    "roles": {
-      "c": 0
-    }
+    "roles": {},
+    "fillFrame": 0
   },
   {
     "id": "ground-grass",
-    "name": "Grass (flat fill)",
-    "tilesetKey": "ground-grass",
+    "name": "Grass",
+    "tilesetKey": "tileset-grass-spring",
     "block": 0,
-    "roles": {
-      "c": 0
-    }
+    "roles": {},
+    "fillFrame": 57
+  },
+  {
+    "id": "ground-tillable",
+    "name": "Tillable field (orange)",
+    "tilesetKey": "tileset-grass-spring",
+    "block": 0,
+    "roles": {},
+    "fillFrame": 345
   },
   {
     "id": "ground-soil-dry",
-    "name": "Tilled soil, dry (flat fill)",
-    "tilesetKey": "ground-soil-dry",
+    "name": "Tilled soil, dry",
+    "tilesetKey": "tileset-soil",
     "block": 0,
-    "roles": {
-      "c": 0
-    }
+    "roles": {},
+    "fillFrame": 26
   },
   {
     "id": "ground-soil-wet",
-    "name": "Tilled soil, wet (flat fill)",
-    "tilesetKey": "ground-soil-wet",
+    "name": "Tilled soil, wet",
+    "tilesetKey": "tileset-soil",
     "block": 0,
-    "roles": {
-      "c": 0
-    }
+    "roles": {},
+    "fillFrame": 38
   },
   {
     "id": "ground-path",
-    "name": "Path (flat fill)",
-    "tilesetKey": "ground-path",
+    "name": "Path",
+    "tilesetKey": "tileset-paths",
     "block": 0,
-    "roles": {
-      "c": 0
-    }
+    "roles": {},
+    "fillFrame": 57
   }
 ]

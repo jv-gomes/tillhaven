@@ -3,20 +3,25 @@ import {
   idleSettingsSchema,
   plantSchema,
   harvestSchema,
+  harvestAllSchema,
+  chopSchema,
   tillSchema,
   unlockPlotSchema,
   upgradeSchema,
   waterSchema,
   type CropId,
+  sleepSchema,
 } from '@tillhaven/shared';
 import { requireAuth, currentPlayer, type AuthedPlayer } from '../../middleware/auth.js';
 import { runIdempotent } from '../../lib/idempotency.js';
-import { getFarmState, plant, harvest, till, water } from './service.js';
+import { getFarmState, plant, harvest, harvestAll, till, water } from './service.js';
+import { chop } from './trees.js';
 import { idleSettings, setIdleSettings } from './idle.js';
 import { catchUpIdle } from './idleApply.js';
 
 import { expansionPrices, unlockPlot } from './expansion.js';
 import { houseView, upgradeHouse } from './house.js';
+import { sleep, wake } from './energy.js';
 import { db } from '../../db/client.js';
 import { hasDueShipments, settleShipments } from '../shipping/service.js';
 
@@ -125,6 +130,43 @@ export async function farmRoutes(app: FastifyInstance): Promise<void> {
   );
 
   /** Buys the NEXT house tier. The body carries no tier — see `upgradeHouse`. */
+  /*
+   * Sleeping (MVP re-scope). Two endpoints rather than one toggle: "put me to
+   * bed" and "get me up" are different intents, and a toggle would make a
+   * retried request flip the state back — exactly what `runIdempotent` exists
+   * to prevent, but only if the two are distinguishable in the first place.
+   *
+   * 20/min. Nobody legitimately gets in and out of bed faster than that, and
+   * the endpoint mints energy.
+   */
+  app.post(
+    '/sleep',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request) => {
+      const player = currentPlayer(request);
+      const input = sleepSchema.parse(request.body);
+      const now = Date.now();
+
+      return runIdempotent(player.id, input.idempotencyKey, 'farm.sleep', now, (tx) =>
+        sleep(tx, player, now),
+      );
+    },
+  );
+
+  app.post(
+    '/wake',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request) => {
+      const player = currentPlayer(request);
+      const input = sleepSchema.parse(request.body);
+      const now = Date.now();
+
+      return runIdempotent(player.id, input.idempotencyKey, 'farm.wake', now, (tx) =>
+        wake(tx, player, now),
+      );
+    },
+  );
+
   app.post(
     '/house/upgrade',
     { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
@@ -195,6 +237,32 @@ export async function farmRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  /**
+   * Chopping (T-20.03). Rate limited like the other tool actions.
+   *
+   * 60/minute is far above what a player can physically do — five trees on an
+   * 8h regrow means the honest ceiling is five chops a *shift* — and that is
+   * the point: the limit is there to stop a script hammering the endpoint, not
+   * to pace the game. The economics are paced by `TREE_REGROW_MS`, which no
+   * amount of requesting can hurry (§8: "design so that automation gains
+   * little").
+   */
+  app.post(
+    '/chop',
+    { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request) => {
+      const player = currentPlayer(request);
+      const input = chopSchema.parse(request.body);
+
+      const now = Date.now();
+      return afterIdleCatchUp(player, now, () =>
+        runIdempotent(player.id, input.idempotencyKey, 'farm.chop', now, (tx) =>
+          chop(tx, player, input.treeId, now),
+        ),
+      );
+    },
+  );
+
   app.post(
     '/plant',
     { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
@@ -244,6 +312,32 @@ export async function farmRoutes(app: FastifyInstance): Promise<void> {
       return afterIdleCatchUp(player, now, () =>
         runIdempotent(player.id, input.idempotencyKey, 'farm.harvest', now, (tx) =>
           harvest(tx, player, input.plotId, now),
+        ),
+      );
+    },
+  );
+
+  /**
+   * Bulk harvest (T-24.01). Tighter limit than `/harvest` on purpose: one call
+   * here can do twenty-five plots' worth of work, so keeping the per-action
+   * budget would make the batch the cheap way to load the database.
+   *
+   * The idle catch-up still runs first, exactly as it does for a single
+   * harvest — the farmer's shift must land before the player's press, or the
+   * simulator gets to decide a plot was ripe an hour after the player cleared
+   * it.
+   */
+  app.post(
+    '/harvest-all',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request) => {
+      const player = currentPlayer(request);
+      const input = harvestAllSchema.parse(request.body);
+
+      const now = Date.now();
+      return afterIdleCatchUp(player, now, () =>
+        runIdempotent(player.id, input.idempotencyKey, 'farm.harvestAll', now, (tx) =>
+          harvestAll(tx, player, now),
         ),
       );
     },

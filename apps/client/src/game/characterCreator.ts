@@ -1,3 +1,4 @@
+import { MODAL_ATTR } from '../lib/focus.js';
 import {
   CHAR_ANIMS,
   CHAR_FRAME,
@@ -274,6 +275,9 @@ export class CharacterCreator {
 
     this.root = document.createElement('section');
     this.root.className = 'creator';
+    // A dialog the player is reading, so it takes movement input (T-18.12).
+    // `isModalOpen` finds it by this attribute; see `lib/focus.ts`.
+    this.root.setAttribute(MODAL_ATTR, '');
     this.root.hidden = true;
     this.root.setAttribute('role', 'dialog');
     this.root.setAttribute('aria-modal', 'true');
@@ -338,12 +342,25 @@ export class CharacterCreator {
   private show(): void {
     this.open = true;
     this.root.hidden = false;
+    this.setChromeHidden(true);
     this.render();
   }
 
   private hide(): void {
     this.open = false;
     this.root.hidden = true;
+    this.setChromeHidden(false);
+  }
+
+  /**
+   * Steps the HUD bar and hotbar aside while the creator is up (T-18.22).
+   *
+   * A class on the HUD root rather than inline styles, so the rule and its
+   * reasoning live in `hud.css` beside the thing it hides. The creator's own
+   * root is a child of that element, so walking up to it is safe from here.
+   */
+  private setChromeHidden(hidden: boolean): void {
+    this.root.parentElement?.classList.toggle('hud--creating', hidden);
   }
 
   private buildRows(): void {

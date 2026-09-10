@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SHEETS, IMAGES } from './assets.js';
+import { SHEETS, ICON_SHEETS, IMAGES } from './assets.js';
 import { TILESET_RUNS, fromGid, runByKey, toGid } from './tilesets.js';
 
 describe('gid allocation', () => {
@@ -65,5 +65,54 @@ describe('toGid / fromGid', () => {
 
   it('throws on an unknown tileset key', () => {
     expect(() => toGid('not-a-real-sheet', 0)).toThrow();
+  });
+});
+
+/**
+ * **`ICON_SHEETS` costs no gids, which is the only reason it exists** (T-34.04).
+ *
+ * Item icons are never painted on a map, but four of them are in `SHEETS`
+ * anyway — each one having cost a gid shift and a map regeneration to add,
+ * each carrying a comment saying so. Since M5 the map is AUTHORED, so
+ * "regenerate it" is no longer an answer, and adding eighteen fish icons the old
+ * way would have renumbered every object in `farm.json`.
+ *
+ * These tests are what stop somebody helpfully "tidying" the third list back
+ * into the first.
+ */
+describe('the gid-free icon list', () => {
+  it('allocates no gid to any icon sheet', () => {
+    for (const icon of ICON_SHEETS) {
+      expect(
+        runByKey(icon.key),
+        `${icon.key} has a gid — it was added to SHEETS or IMAGES, which ` +
+          'renumbers every tileset after it and repaints farm.json',
+      ).toBeUndefined();
+    }
+  });
+
+  it('keeps every icon sheet out of the gid-allocated lists', () => {
+    const allocated = new Set(TILESET_RUNS.map((r) => r.key));
+    for (const icon of ICON_SHEETS) expect(allocated.has(icon.key)).toBe(false);
+  });
+
+  it('still gives every icon sheet a unique key across all three lists', () => {
+    const keys = [...SHEETS, ...ICON_SHEETS, ...IMAGES].map((s) => s.key);
+    expect(new Set(keys).size, 'two manifest entries share a key').toBe(keys.length);
+  });
+
+  /**
+   * The gid table must not move when the icon list grows. Pinned as a total, so
+   * appending a nineteenth fish cannot silently shift the map — the number here
+   * changes only when somebody edits `SHEETS` or `IMAGES`, which is exactly the
+   * edit that needs a second look.
+   */
+  it('has a gid table that ends where the paintable art ends', () => {
+    const last = TILESET_RUNS[TILESET_RUNS.length - 1]!;
+    const total = last.firstgid + last.tileCount - 1;
+    const paintable = [...SHEETS, ...IMAGES].length;
+
+    expect(TILESET_RUNS).toHaveLength(paintable);
+    expect(total).toBeGreaterThan(0);
   });
 });

@@ -1,4 +1,5 @@
 import { isApiError, type ApiError } from '@tillhaven/shared';
+import { apiUrl } from './origin.js';
 
 /**
  * Thin wrapper over the REST API.
@@ -7,6 +8,10 @@ import { isApiError, type ApiError } from '@tillhaven/shared';
  * It never decides an outcome (CLAUDE.md §4.1). Session state lives in an
  * httpOnly cookie, so there is no token to hold here — `credentials: 'include'`
  * is what carries it.
+ *
+ * The URL comes from `origin.ts` rather than being written `/api...` here: the
+ * client and the API are deployed to different origins now, and that module is
+ * the one place that knows where the API is.
  */
 
 export class ApiRequestError extends Error {
@@ -30,7 +35,7 @@ async function request<T>(
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`/api${path}`, {
+    res = await fetch(apiUrl(path), {
       method,
       credentials: 'include',
       headers: body === undefined ? {} : { 'content-type': 'application/json' },

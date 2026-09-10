@@ -17,10 +17,39 @@ export const STARTING_GOLD = 500;
  *
  * Granted once, in the same transaction as the account. Counted in
  * docs/economy.md as an item faucet — the seeds are worth
- * `4 × leek_seeds + 2 × potato_seeds` = 180g of goods, which matters when
- * balancing the opening hour. The tools are worth nothing by construction:
- * unbuyable, unsellable, untradeable (T-8.06), so they add no value to the
- * economy, only the ability to farm at all.
+ * `4 × parsnip_seeds + 2 × leek_seeds` = 64g of goods. The tools are worth
+ * nothing by construction: unbuyable, unsellable, untradeable (T-8.06), so
+ * they add no value to the economy, only the ability to farm at all.
+ *
+ * **The kit closes D-18's 42-minute hole with the mechanic, not with gold**
+ * (T-31.05). Until Phase 31 the fastest crop in the game was leek at 45
+ * minutes, so a new player planted six plots in three minutes and then had
+ * nothing to do until 0:45 — they left before ever completing the loop the
+ * game is made of. Parsnip ripens in **12 minutes**, so the first thing
+ * planted finishes while the player is still there: till, plant, water,
+ * harvest, all inside one sitting.
+ *
+ * **Four parsnip and two leek rather than six of either**, and the split is
+ * the teaching. Four parsnips at 0:15 is a harvest that feels like one and
+ * closes the loop; the two leeks ripening at 0:45 are the first reason to come
+ * back later, which is the idle pillar (§1) demonstrated rather than
+ * explained. Six identical seeds would teach the loop and nothing else.
+ *
+ * **Potato left the kit and that is not a downgrade.** It was the 2-hour crop
+ * in a kit meant to teach a loop, and the `first_yield` milestone
+ * (`milestones.ts`) pays two potato seeds for the first harvest — so a player
+ * still meets potato in the first session, as a reward for finishing the loop
+ * rather than as a plot they cannot check on. The kit's goods value drops from
+ * 180g to 64g, which is deliberate: the opening constraint is **plots and
+ * time**, not gold — 500 starting gold already buys far more seed than six
+ * plots can hold.
+ *
+ * **Twelve minutes is a floor, not a preference.** `xpForDuration` awards
+ * `max(1, floor(ms / XP_PER_UNIT_MS))`, so a crop under five minutes still
+ * pays a whole XP and would beat every other crop on experience per hour —
+ * and experience is the anti-alt control behind `TRADE_MIN_FARM_LEVEL`
+ * (`config/level.ts`). `level.test.ts` refuses any crop shorter than
+ * `XP_PER_UNIT_MS`. The hole can be made small; it cannot be made zero.
  *
  * **Order is load-bearing.** `auth/service.ts` inserts these at
  * `slotIndex: index`, and T-8.07 makes the first twelve backpack slots the
@@ -31,8 +60,8 @@ export const STARTING_GOLD = 500;
 export const STARTING_ITEMS: readonly { readonly itemId: string; readonly quantity: number }[] = [
   { itemId: 'hoe_wood', quantity: 1 },
   { itemId: 'watering_can_wood', quantity: 1 },
-  { itemId: 'leek_seeds', quantity: 4 },
-  { itemId: 'potato_seeds', quantity: 2 },
+  { itemId: 'parsnip_seeds', quantity: 4 },
+  { itemId: 'leek_seeds', quantity: 2 },
 ];
 
 /** Plot count a new farm begins with. */

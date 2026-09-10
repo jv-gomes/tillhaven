@@ -36,7 +36,37 @@ export const FARM_MAP: TilemapSpec = {
   path: `${TILEMAP_BASE}/farm.json`,
 };
 
-export const TILEMAPS = [FARM_MAP] as const satisfies readonly TilemapSpec[];
+/**
+ * The house interior (T-16.10), authored by
+ * `apps/mapmaker/scripts/generate-interior.ts` like the farm.
+ *
+ * A second map at all is new in Phase 16 — until then `TILEMAPS` had one entry
+ * and `FARM_WIDTH`/`FARM_HEIGHT` were read as ambient globals by anything that
+ * needed a map size. See `MapBounds`.
+ */
+export const INTERIOR_MAP: TilemapSpec = {
+  key: 'interior-map',
+  path: `${TILEMAP_BASE}/interior.json`,
+};
+
+export const TILEMAPS = [FARM_MAP, INTERIOR_MAP] as const satisfies readonly TilemapSpec[];
+
+/**
+ * The size of whichever map something is acting on, in tiles (T-16.09).
+ *
+ * Introduced because `facedTile` clamped to `FARM_WIDTH`/`FARM_HEIGHT` as
+ * module constants, which is correct exactly once — the farm — and silently
+ * wrong the moment a character stands in a ten-tile room and faces east.
+ *
+ * Deliberately NOT threaded through `pasture.ts`, `decor.ts`, `reachability.ts`
+ * or the farm tile schemas: those are farm-only systems with no second caller,
+ * and parameterising them would be churn that makes every signature longer to
+ * express a generality nothing uses.
+ */
+export interface MapBounds {
+  readonly width: number;
+  readonly height: number;
+}
 
 /**
  * Farm grid size in tiles.
@@ -57,6 +87,9 @@ export const TILEMAPS = [FARM_MAP] as const satisfies readonly TilemapSpec[];
  */
 export const FARM_WIDTH = 30;
 export const FARM_HEIGHT = 22;
+
+/** The farm's size as a `MapBounds`, for the things that now take one. */
+export const FARM_BOUNDS: MapBounds = { width: FARM_WIDTH, height: FARM_HEIGHT };
 
 export interface TilesetRun {
   readonly key: string;

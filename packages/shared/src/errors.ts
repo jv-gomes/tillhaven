@@ -22,6 +22,28 @@ export const ErrorCode = {
   NOT_FOUND: 'NOT_FOUND',
   INTERNAL: 'INTERNAL',
 
+  // --- farm decoration (T-15.19) ---
+  /**
+   * A solid piece would cut something off that the player has to reach — a
+   * plot's approach ring, the chest, the merchant, the shipping box, a yard.
+   *
+   * Its own code rather than `VALIDATION_FAILED` because it is the one decor
+   * refusal a player will hit while doing something perfectly reasonable, and
+   * the client has to be able to explain *why* the fence cannot close.
+   */
+  DECOR_BLOCKS_PATH: 'DECOR_BLOCKS_PATH',
+  /** A solid piece orthogonally beside a plot would make it unworkable. */
+  DECOR_BLOCKS_PLOT: 'DECOR_BLOCKS_PLOT',
+  /** Plots, water, buildings, map objects and yard slots are all spoken for. */
+  DECOR_RESERVED_GROUND: 'DECOR_RESERVED_GROUND',
+  /**
+   * Indoors: the piece would seal the player in, or seal a piece away from
+   * them (T-18.08). The interior twin of `DECOR_BLOCKS_PATH`, and its own code
+   * for the same reason — it is the one furniture refusal a player will hit
+   * while decorating perfectly reasonably, and "does not fit" would be a lie.
+   */
+  FURNITURE_BLOCKS_ROOM: 'FURNITURE_BLOCKS_ROOM',
+
   // --- farm / crops ---
   PLOT_OCCUPIED: 'PLOT_OCCUPIED',
   PLOT_EMPTY: 'PLOT_EMPTY',
@@ -31,6 +53,10 @@ export const ErrorCode = {
   /** Already hoed. Tilling twice is a no-op the player should hear about. */
   PLOT_ALREADY_TILLED: 'PLOT_ALREADY_TILLED',
   CROP_NOT_READY: 'CROP_NOT_READY',
+  /** Chopping a stump that has not grown back yet (T-20.03). */
+  TREE_NOT_READY: 'TREE_NOT_READY',
+  /** The action needs a tool this player does not own (T-20.03). */
+  TOOL_REQUIRED: 'TOOL_REQUIRED',
   UNKNOWN_CROP: 'UNKNOWN_CROP',
   PLOT_ALREADY_UNLOCKED: 'PLOT_ALREADY_UNLOCKED',
   PLOT_CAP_REACHED: 'PLOT_CAP_REACHED',
@@ -47,6 +73,17 @@ export const ErrorCode = {
   ANIMAL_NOT_MATURE: 'ANIMAL_NOT_MATURE',
   ANIMAL_UNFED: 'ANIMAL_UNFED',
   NOTHING_TO_COLLECT: 'NOTHING_TO_COLLECT',
+
+  /* Milestones (T-30.07). */
+  MILESTONE_NOT_EARNED: 'MILESTONE_NOT_EARNED',
+  MILESTONE_ALREADY_CLAIMED: 'MILESTONE_ALREADY_CLAIMED',
+  QUEST_NOT_AVAILABLE: 'QUEST_NOT_AVAILABLE',
+  QUEST_ALREADY_ACCEPTED: 'QUEST_ALREADY_ACCEPTED',
+  QUEST_NOT_ACCEPTED: 'QUEST_NOT_ACCEPTED',
+  QUEST_ALREADY_COMPLETED: 'QUEST_ALREADY_COMPLETED',
+  LINE_ALREADY_OUT: 'LINE_ALREADY_OUT',
+  NO_LINE_OUT: 'NO_LINE_OUT',
+  CAST_EXPIRED: 'CAST_EXPIRED',
   ANIMAL_CAP_REACHED: 'ANIMAL_CAP_REACHED',
 
   // --- inventory ---
@@ -61,6 +98,9 @@ export const ErrorCode = {
 
   // --- shop ---
   ITEM_NOT_FOR_SALE: 'ITEM_NOT_FOR_SALE',
+  SEED_LOCKED: 'SEED_LOCKED',
+  INSUFFICIENT_ENERGY: 'INSUFFICIENT_ENERGY',
+  ASLEEP: 'ASLEEP',
   ITEM_NOT_SELLABLE: 'ITEM_NOT_SELLABLE',
 
   // --- trade (CLAUDE.md §6) ---
@@ -101,12 +141,21 @@ const STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   INTERNAL: 500,
 
+  DECOR_BLOCKS_PATH: 409,
+  DECOR_BLOCKS_PLOT: 409,
+  DECOR_RESERVED_GROUND: 409,
+  FURNITURE_BLOCKS_ROOM: 409,
+
   PLOT_OCCUPIED: 409,
   PLOT_EMPTY: 409,
   PLOT_LOCKED: 403,
   PLOT_NOT_TILLED: 409,
   PLOT_ALREADY_TILLED: 409,
   CROP_NOT_READY: 409,
+  TREE_NOT_READY: 409,
+  // 403, not 409: the state is fine, the player just lacks the tool. A
+  // conflict would suggest waiting would help.
+  TOOL_REQUIRED: 403,
   UNKNOWN_CROP: 400,
   PLOT_ALREADY_UNLOCKED: 409,
   PLOT_CAP_REACHED: 409,
@@ -116,6 +165,15 @@ const STATUS: Record<ErrorCode, number> = {
   ANIMAL_NOT_MATURE: 409,
   ANIMAL_UNFED: 409,
   NOTHING_TO_COLLECT: 409,
+  MILESTONE_NOT_EARNED: 409,
+  MILESTONE_ALREADY_CLAIMED: 409,
+  QUEST_NOT_AVAILABLE: 409,
+  QUEST_ALREADY_ACCEPTED: 409,
+  QUEST_NOT_ACCEPTED: 409,
+  QUEST_ALREADY_COMPLETED: 409,
+  LINE_ALREADY_OUT: 409,
+  NO_LINE_OUT: 409,
+  CAST_EXPIRED: 409,
   ANIMAL_CAP_REACHED: 409,
 
   INVENTORY_FULL: 409,
@@ -127,6 +185,11 @@ const STATUS: Record<ErrorCode, number> = {
   UPGRADE_MAX_TIER: 409,
 
   ITEM_NOT_FOR_SALE: 400,
+  SEED_LOCKED: 403,
+  // 409: the request is well-formed and permitted, but the farm's current
+  // state cannot satisfy it — the same shape as INSUFFICIENT_GOLD.
+  INSUFFICIENT_ENERGY: 409,
+  ASLEEP: 409,
   ITEM_NOT_SELLABLE: 400,
 
   TRADE_NOT_FOUND: 404,

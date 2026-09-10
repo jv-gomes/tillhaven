@@ -2,6 +2,8 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastif
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import { rateLimitKey } from './middleware/rateLimitKey.js';
+import { SESSION_COOKIE } from './modules/auth/session.js';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,9 +20,13 @@ import { farmRoutes } from './modules/farm/routes.js';
 import { inventoryRoutes } from './modules/inventory/routes.js';
 import { animalRoutes } from './modules/animals/routes.js';
 import { houseRoutes } from './modules/house/routes.js';
+import { decorRoutes } from './modules/decor/routes.js';
 import { tradeRoutes } from './modules/trade/routes.js';
 import { shopRoutes } from './modules/shop/routes.js';
 import { shippingRoutes } from './modules/shipping/routes.js';
+import { progressionRoutes } from './modules/progression/routes.js';
+import { questRoutes } from './modules/quests/routes.js';
+import { fishingRoutes } from './modules/fishing/routes.js';
 import { vipRoutes } from './modules/vip/routes.js';
 import { vipWebhookRoutes } from './modules/vip/webhookRoutes.js';
 import { defaultVipStripeClient, type VipStripeClient } from './modules/vip/stripe.js';
@@ -47,6 +53,7 @@ const PAGES: Readonly<Record<string, string>> = {
   '/play': 'play.html',
   '/terms': 'terms.html',
   '/privacy': 'privacy.html',
+  '/credits': 'credits.html',
 };
 
 /** Pages that require a session. Reached without one, they bounce to /login. */
@@ -103,15 +110,20 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   });
 
   /**
-   * Global backstop only. Idle games are heavily botted, so every mutating
-   * endpoint gets its own tighter per-account limit on top of this
-   * (CLAUDE.md §8).
+   * Global backstop, plus the key every per-route limit inherits (§8, T-14.07).
+   *
+   * `keyGenerator` set here is the DEFAULT for route-level `config.rateLimit`
+   * too, so one line gives all 37 mutating endpoints a per-session budget
+   * instead of a per-IP one — see `rateLimitKey` for why that is the half that
+   * was missing, and why the token is hashed. `/auth/login` overrides it with
+   * its own composite key, correctly: it is the one route with no session yet.
    */
   if (opts.rateLimit !== false || isProd) {
     await app.register(rateLimit, {
       global: true,
       max: 300,
       timeWindow: '1 minute',
+      keyGenerator: (req) => rateLimitKey(req.cookies?.[SESSION_COOKIE], req.ip),
     });
   }
 
@@ -157,9 +169,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(inventoryRoutes, { prefix: '/api/inventory' });
   await app.register(animalRoutes, { prefix: '/api/animals' });
   await app.register(houseRoutes, { prefix: '/api/house' });
+  await app.register(decorRoutes, { prefix: '/api/decor' });
   await app.register(tradeRoutes, { prefix: '/api/trade' });
   await app.register(shopRoutes, { prefix: '/api/shop' });
   await app.register(shippingRoutes, { prefix: '/api/shipping' });
+  await app.register(progressionRoutes, { prefix: '/api/progression' });
+  await app.register(questRoutes, { prefix: '/api/quests' });
+  await app.register(fishingRoutes, { prefix: '/api/fishing' });
   await app.register(vipRoutes, { prefix: '/api/vip' });
   // A separate plugin instance, deliberately — it needs the raw request body
   // and must NOT inherit `vipRoutes`'s `requireAuth` hook (see the file's

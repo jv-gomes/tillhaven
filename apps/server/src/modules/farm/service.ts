@@ -4,15 +4,18 @@ import {
   ErrorCode,
   CROPS,
   WATER_DURATION_MS,
+  treeStateAt,
   isCropId,
   benefitsFor,
   type CropId,
   type FarmState,
   type PlotView,
   type AnimalView,
+  type TreeView,
   type Farm,
   type IdleView,
   type IdleSummaryView,
+  EnergyAction,
 } from '@tillhaven/shared';
 import { db, schema } from '../../db/client.js';
 import type { Tx } from '../../db/tx.js';
@@ -31,6 +34,7 @@ import {
 } from '../inventory/service.js';
 import { toSelfPlayer } from '../player/view.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
+import { readEnergyRow, spendEnergy } from './energy.js';
 
 /** Anything that can run a query: the pool, or a transaction handle. */
 type Queryable = Tx | typeof db;
@@ -128,7 +132,7 @@ export async function getFarmState(
     if (shift.to > 0) idleProcessedAt = shift.to;
   }
 
-  const [plotRows, animalRows] = await Promise.all([
+  const [plotRows, animalRows, treeRows] = await Promise.all([
     db
       .select()
       .from(schema.plots)
@@ -139,6 +143,11 @@ export async function getFarmState(
       .from(schema.animals)
       .where(eq(schema.animals.farmId, farmRow.id))
       .orderBy(asc(schema.animals.acquiredAt)),
+    db
+      .select()
+      .from(schema.trees)
+      .where(eq(schema.trees.farmId, farmRow.id))
+      .orderBy(asc(schema.trees.y), asc(schema.trees.x)),
   ]);
 
   const benefits = benefitsFor(player, now);
@@ -211,6 +220,20 @@ export async function getFarmState(
     };
   });
 
+  /*
+   * Trees (T-20.01). Regrowth is derived here and nowhere else: the row stores
+   * `choppedAt` and the answer is computed on read, so a stump grows back while
+   * the tab is closed with no job to run it (§4.2).
+   *
+   * Through the same pure `treeStateAt` the chop intent will use, for the same
+   * reason the animals above go through `productionAt` — what the client is
+   * shown and what the server will act on cannot then disagree (§4.4).
+   */
+  const trees: TreeView[] = treeRows.map((t) => {
+    const state = treeStateAt(t.choppedAt, now);
+    return { id: t.id, x: t.x, y: t.y, ...state };
+  });
+
   const idle = await idleViewFor(player, farmRow, {
     processedAt: idleProcessedAt,
     plots: plotRows,
@@ -222,6 +245,7 @@ export async function getFarmState(
     farm,
     plots,
     animals,
+    trees,
     player: toSelfPlayer(player, now),
     shippingPaid,
     idle,
@@ -320,7 +344,18 @@ async function idleViewFor(
     // Narrowed to the three fields the client may have: the simulator also
     // records which crop an action moved, and that is a plan the player has not
     // acted on yet (§4.1).
-    nextAction: next === null ? null : { kind: next.kind, plotId: next.plotId, at: next.at },
+    nextAction:
+      next === null
+        ? null
+        : {
+            kind: next.kind,
+            at: next.at,
+            // One of the two, never both: chopping addresses a tree, everything
+            // else a plot (T-20.06). Spread so the absent one is omitted rather
+            // than sent as null — the client walks to whichever it is given.
+            ...(next.plotId ? { plotId: next.plotId } : {}),
+            ...(next.treeId ? { treeId: next.treeId } : {}),
+          },
   };
 }
 
@@ -395,6 +430,14 @@ export async function till(
     throw new GameError(ErrorCode.PLOT_ALREADY_TILLED, 'That soil is already tilled.');
   }
 
+  /*
+   * Energy is charged AFTER the state checks and before the first write.
+   * After, so a refused action costs nothing — being told "that plot is
+   * already tilled" must not also take two points off the bar. Before, so the
+   * charge and the effect are in one transaction and cannot come apart.
+   */
+  await spendEnergy(tx, player, EnergyAction.TILL, now);
+
   await tx
     .update(schema.plots)
     .set({ tilledAt: now })
@@ -439,6 +482,8 @@ export async function plant(
   if (plot.tilledAt === null) {
     throw new GameError(ErrorCode.PLOT_NOT_TILLED, 'That soil needs tilling first.');
   }
+
+  await spendEnergy(tx, player, EnergyAction.PLANT, now);
 
   // Throws INSUFFICIENT_ITEMS and rolls the whole thing back if the seed is
   // not held — so a failed plant never consumes anything.
@@ -516,6 +561,8 @@ export async function water(
     throw new GameError(ErrorCode.PLOT_EMPTY, 'There is nothing growing there.');
   }
 
+  await spendEnergy(tx, player, EnergyAction.WATER, now);
+
   const grownMs = settleGrowth(plot, now);
 
   await tx
@@ -572,6 +619,8 @@ export async function harvest(
     });
   }
 
+  await spendEnergy(tx, player, EnergyAction.HARVEST, now);
+
   const capacity = await capacityForPlayer(tx, player, Container.INVENTORY, now);
 
   // Throws INVENTORY_FULL and rolls back, leaving the crop where it is.
@@ -610,6 +659,160 @@ export async function harvest(
     quantity: crop.yieldAmount,
     experience,
     farmLevel: levelForXp(experience),
+  };
+}
+
+export interface HarvestAllResult {
+  readonly harvested: readonly HarvestResult[];
+  /**
+   * True when the bag filled and ripe crops were left standing. The client
+   * needs to tell "I cleared your farm" from "I cleared what fitted" — they
+   * are different sentences and only one of them asks the player to do
+   * something.
+   */
+  readonly stoppedByFullBag: boolean;
+  /** True when the batch stopped because the farmer ran out of energy. */
+  readonly stoppedByEnergy: boolean;
+  /** Lifetime experience and level after the whole batch, for the HUD. */
+  readonly experience: number;
+  readonly farmLevel: number;
+}
+
+/**
+ * Harvests every ripe plot in one intent — `VIP_BENEFITS.bulkHarvest`
+ * (T-24.01, D-23).
+ *
+ * **It calls `harvest` in a loop rather than reimplementing it.** Bulk harvest
+ * must mean exactly N harvests, or it becomes a second set of rules for what a
+ * harvest does to soil, to `grownMs`, to XP — and the day one of them changes,
+ * the paid path is the one that silently keeps the old behaviour. The cost is
+ * one lock and one update per plot, which is bounded by `MAX_PLOTS` (21) plus
+ * the VIP bonus and only reachable by a VIP.
+ *
+ * **Each plot runs in its own savepoint** (`tx.transaction` nests as
+ * `SAVEPOINT`), so a plot that fails rolls back alone and the ones that
+ * succeeded stay harvested.
+ *
+ * A flat loop passes every test in this file today, and the reason is worth
+ * writing down because it is not a property of this function: `addItem` calls
+ * `planAdd` and throws INVENTORY_FULL **before it writes anything**, so today
+ * a failed `harvest` leaves no partial row behind and there is nothing for a
+ * savepoint to undo. That is an invariant of `inventory/service.ts`, held by
+ * the order of two statements in a different module, and nothing pins it.
+ * Measured what happens without it (T-24.01): moving `harvest`'s plot update
+ * above its `addItem` and dropping the savepoint clears a plot and adds no
+ * produce — silent item destruction, on the paid path only. Restoring the
+ * savepoint alone fixes it with the reorder still in place.
+ *
+ * So the savepoint is not decoration and it is not for the bag: it makes this
+ * batch's atomicity depend on the transaction rather than on another module's
+ * statement order.
+ *
+ * Plots are taken in `id` order so two concurrent batches lock in the same
+ * sequence and cannot deadlock each other.
+ */
+export async function harvestAll(
+  tx: Tx,
+  player: AuthedPlayer,
+  now: number,
+): Promise<HarvestAllResult> {
+  const benefits = benefitsFor(player, now);
+  if (!benefits.bulkHarvest) {
+    throw new GameError(ErrorCode.FORBIDDEN, 'Harvesting everything at once is a VIP perk.');
+  }
+
+  /*
+   * Unlocked read: every candidate is re-checked under its own row lock inside
+   * `harvest`, which is the check that counts. This scan only decides what to
+   * try, and a plot that stopped being ripe in between is handled below.
+   */
+  const rows = await tx
+    .select({ plot: schema.plots })
+    .from(schema.plots)
+    .innerJoin(schema.farms, eq(schema.plots.farmId, schema.farms.id))
+    .where(eq(schema.farms.playerId, player.id))
+    .orderBy(asc(schema.plots.id));
+
+  const ripe = rows
+    .map((r) => r.plot)
+    .filter(
+      (plot) =>
+        plot.unlocked &&
+        plot.cropId !== null &&
+        isCropId(plot.cropId) &&
+        growthAt(plot, now, benefits.durationPercent).isRipe,
+    );
+
+  if (ripe.length === 0) {
+    throw new GameError(ErrorCode.CROP_NOT_READY, 'Nothing is ready to harvest yet.');
+  }
+
+  const harvested: HarvestResult[] = [];
+  let stoppedByFullBag = false;
+  let stoppedByEnergy = false;
+
+  for (const plot of ripe) {
+    try {
+      /*
+       * **The player's energy is re-read every iteration**, because `harvest`
+       * charges with a conditional `where energy_spent = <what we read>` and
+       * the session copy is stale the moment the first plot is picked. Without
+       * this the second plot would fail as a "race" against ourselves.
+       */
+      const energy = await readEnergyRow(tx, player.id);
+      const current: AuthedPlayer = { ...player, ...energy };
+
+      // Nested = SAVEPOINT. One plot's failure is one plot's rollback.
+      const result = await tx.transaction((sp) => harvest(sp as Tx, current, plot.id, now));
+      harvested.push(result);
+    } catch (err) {
+      if (!(err instanceof GameError)) throw err;
+      if (err.code === ErrorCode.INVENTORY_FULL) {
+        stoppedByFullBag = true;
+        break;
+      }
+      /*
+       * Out of energy partway through. Stopping cleanly beats failing the
+       * whole batch: the player pressed one button meaning "clear the farm",
+       * and clearing what they could afford is the useful answer. The result
+       * says how far it got.
+       */
+      if (err.code === ErrorCode.INSUFFICIENT_ENERGY) {
+        stoppedByEnergy = true;
+        break;
+      }
+      /*
+       * The plot stopped being ripe between the scan and its lock — the idle
+       * farmer got there first, or a second tab did. Skip it; it is not an
+       * error, it is the thing already being done.
+       */
+      if (err.code === ErrorCode.CROP_NOT_READY || err.code === ErrorCode.PLOT_EMPTY) continue;
+      throw err;
+    }
+  }
+
+  /*
+   * Everything ripe was already gone by the time we held its lock, and the bag
+   * never filled. Refusing with the same code as "nothing is ready" is honest:
+   * from the player's side nothing was there to take.
+   */
+  if (harvested.length === 0 && stoppedByEnergy) {
+    throw new GameError(ErrorCode.INSUFFICIENT_ENERGY, 'You are too tired.');
+  }
+  if (harvested.length === 0 && !stoppedByFullBag) {
+    throw new GameError(ErrorCode.CROP_NOT_READY, 'Nothing is ready to harvest yet.');
+  }
+  if (harvested.length === 0) {
+    throw new GameError(ErrorCode.INVENTORY_FULL, 'Your bag is full.');
+  }
+
+  const last = harvested[harvested.length - 1]!;
+  return {
+    harvested,
+    stoppedByFullBag,
+    stoppedByEnergy,
+    experience: last.experience,
+    farmLevel: last.farmLevel,
   };
 }
 

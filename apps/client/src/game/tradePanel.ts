@@ -1,7 +1,9 @@
+import { MODAL_ATTR } from '../lib/focus.js';
 import { ITEMS } from '@tillhaven/shared/config';
 import { messageFor, codeOf } from '../net/errors.js';
 import { idempotencyKey } from '../net/api.js';
 import { onTradeChanged } from '../net/realtime.js';
+import type { TradeEligibility } from '@tillhaven/shared/types';
 import {
   fetchCurrentTrade,
   fetchTradeHistory,
@@ -29,10 +31,56 @@ import {
 export interface TradeHost {
   /** Deduplicated bag contents, for the offer builder's item picker. */
   bagItems(): { itemId: string; quantity: number }[];
+  /**
+   * Whether this player may trade yet, and why not (T-22.03).
+   *
+   * Null before the first poll lands. The server decides; this is the reason it
+   * gives, so the panel can explain a temporary rule instead of letting the
+   * player discover it by being refused.
+   */
+  eligibility(): TradeEligibility | null;
   /** Called after a trade completes, so the bag and gold can be re-synced. */
   onExecuted(): void;
   toast(message: string, kind?: 'info' | 'error'): void;
   icon(itemId: string, scale?: number): HTMLElement | null;
+}
+
+/**
+ * Why this player cannot trade yet, as a sentence, or null when they can.
+ *
+ * **The rule is not the problem; discovering it by refusal is.** Trading is
+ * gated on a 24-hour account age and farm level 5 (§14), checked for both
+ * parties at invite AND at execution. Before T-22.03 the panel showed the
+ * invite form regardless of eligibility, so the only way to learn about the
+ * gate was to type a friend's name and be told no — on the one feature in the
+ * game with a deliberate waiting period, which reads as a broken button.
+ *
+ * A free function rather than a method so it can be tested without a DOM: the
+ * branching is the substance, and the rendering is one `innerHTML`.
+ */
+export function blockedReason(state: TradeEligibility | null): string | null {
+  // Null before the first poll — say nothing rather than guess, since the
+  // overwhelmingly common case is that the player CAN trade.
+  if (!state || state.eligible) return null;
+
+  switch (state.blockedBy) {
+    case 'account_too_new': {
+      // Rounded UP. "0 hours to go" on a gate that has not opened is a lie the
+      // player will hold you to a minute later.
+      const hours = Math.ceil(state.accountAgeRemainingMs / (60 * 60 * 1000));
+      return `New farms cannot trade for their first day — about ${hours} hour${
+        hours === 1 ? '' : 's'
+      } to go.`;
+    }
+    case 'farm_too_low':
+      return `Your farm reaches trading at level ${state.requiredFarmLevel}. It is level ${state.farmLevel} — keep harvesting.`;
+    case 'flagged':
+      // Deliberately vague. The player is told they cannot trade, not the
+      // details of a chargeback investigation.
+      return 'Trading is unavailable on this account.';
+    default:
+      return 'You cannot trade yet.';
+  }
 }
 
 /** Local counter, not the server's revision — just a redraw throttle for the countdown. */
@@ -66,6 +114,9 @@ export class TradePanel {
 
     this.root = document.createElement('section');
     this.root.className = 'trade';
+    // A dialog the player is reading, so it takes movement input (T-18.12).
+    // `isModalOpen` finds it by this attribute; see `lib/focus.ts`.
+    this.root.setAttribute(MODAL_ATTR, '');
     this.root.hidden = true;
     this.root.setAttribute('aria-label', 'Trade');
     this.root.innerHTML = `
@@ -94,7 +145,21 @@ export class TradePanel {
     });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.open) this.hide();
+      if (e.key !== 'Escape' || !this.open) return;
+      /*
+       * Consume the press (T-18.13, BUG-11). Phaser's keyboard plugin listens
+       * on `window`; these panels listen on `document`, which is the last hop
+       * before it — so stopping here is what keeps one Escape to one layer.
+       * Without it, closing this panel ALSO ran the Interior scene's handler
+       * and walked the player out of the house in the same press.
+       *
+       * `stopPropagation`, not `stopImmediatePropagation`: the other panels'
+       * listeners are on this same node and are harmless (each checks its own
+       * `open`), and silencing them would make this depend on registration
+       * order, which is the thing that made the bug hard to see.
+       */
+      e.stopPropagation();
+      this.hide();
     });
 
     // The push channel: any change to a trade either party is in re-fetches
@@ -150,9 +215,9 @@ export class TradePanel {
 
   /** Applies a freshly-fetched trade, flagging a reset before replacing state. */
   private apply(trade: TradeView | null): void {
-    const wasCompleted = this.trade?.status === 'ACTIVE' && trade?.status === 'COMPLETED';
+    const wasCompleted = this.trade?.status === 'open' && trade?.status === 'completed';
 
-    if (trade && trade.status === 'ACTIVE' && this.lastSeenRevision !== null) {
+    if (trade && trade.status === 'open' && this.lastSeenRevision !== null) {
       const revisionMoved = trade.revision !== this.lastSeenRevision;
       const someoneWasConfirmed = this.lastSeenYouConfirmed || this.lastSeenThemConfirmed;
       if (revisionMoved && someoneWasConfirmed && trade.id === this.trade?.id) {
@@ -216,11 +281,11 @@ export class TradePanel {
     }
 
     switch (this.trade.status) {
-      case 'PENDING':
+      case 'pending':
         this.hideAlert();
         this.renderPending(this.trade);
         break;
-      case 'ACTIVE':
+      case 'open':
         this.renderActive(this.trade);
         break;
       default:
@@ -235,7 +300,7 @@ export class TradePanel {
 
   private renderCountdown(): void {
     const el = this.root.querySelector<HTMLElement>('[data-expiry]')!;
-    if (!this.trade || this.trade.status !== 'ACTIVE') {
+    if (!this.trade || this.trade.status !== 'open') {
       el.textContent = '';
       return;
     }
@@ -318,6 +383,19 @@ export class TradePanel {
   }
 
   private renderInvite(): void {
+    const blocked = blockedReason(this.host.eligibility());
+    if (blocked !== null) {
+      /*
+       * No input at all, deliberately. A disabled field the player can type
+       * into and not submit is a worse version of the same dead end — the
+       * sentence IS the answer, and there is nothing useful to do here yet.
+       */
+      this.bodyEl.innerHTML = `<p class="trade__hint trade__hint--blocked">${escapeHtml(
+        blocked,
+      )}</p>`;
+      return;
+    }
+
     this.bodyEl.innerHTML = `
       <p class="trade__hint">Invite a farmer to trade by their farm name.</p>
       <div class="trade__invite">
