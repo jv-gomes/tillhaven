@@ -9,7 +9,6 @@ build/
 !.env.example
 
 # Generated: produced by `pnpm assets` from the sources in /assets
-apps/client/public/assets/
 
 # Licensed asset pack (EmanuelleDev) — redistribution forbidden, so it must
 # never be committed. See ATTRIBUTION.md. A fresh clone needs the pack copied
