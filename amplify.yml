@@ -14,10 +14,6 @@ applications:
         build:
           commands:
             - pnpm --filter @tillhaven/client build
-            - echo "=== CHECK DIST ==="
-            - ls -lah apps/client/dist/assets/crop-spring-onion.png
-            - echo "=== IMAGE FILES ==="
-            - find apps/client/dist -iname "*.png" | head -30
 
       artifacts:
         baseDirectory: apps/client/dist
