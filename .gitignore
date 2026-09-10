@@ -18,7 +18,6 @@ apps/client/public/assets/
 # It lived at `new_assets/` until the pack was reorganised; `assets/` is now
 # the pack itself, NOT the v1 art T-7.07 deleted. Getting this line wrong
 # publishes licensed art, so it is worth the paragraph.
-assets/
 
 .DS_Store
 *.log
