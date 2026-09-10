@@ -13,7 +13,10 @@ applications:
             - npm install -g pnpm@11.15.1
             - pnpm --version
             - pnpm install --frozen-lockfile
-
+            - echo "=== CHECK DIST ==="
+            - ls -lah apps/client/dist/assets/crop-spring-onion.png
+            - echo "=== IMAGE FILES ==="
+            - find apps/client/dist -iname "*.png" | head -30
         build:
           commands:
             - pnpm --filter @tillhaven/client build
