@@ -17,4 +17,4 @@ Vamos mudar algumas coisas, principalmente a utilização dos assets
 - Utilize apenas plantações do Spring
 - Para os assets de cada planta do spring utilize ["Crops/Spring"]
 - Para a semente que compra para plantar, ela está em ["All Crops"], onde parece que tem um saco de semente, logo pare de utilizar o assets da mochila
-
+- 
