@@ -1,5 +1,19 @@
 import '../styles/base.css';
 import '../styles/auth.css';
+/*
+ * `ui.css` AFTER `base.css`, and that order is the point (Phase U3).
+ *
+ * It carries the three `@font-face` blocks and the pack's own primitives,
+ * scoped to `.hud, .ui-scope` — a hook `ui.css` has declared since Phase U and
+ * nothing outside the game had ever used. The site uses it now for the night
+ * register: the hero, the auth card and the boot curtain wear the same timber
+ * the HUD does.
+ *
+ * Later file wins at equal specificity, so `.ui-plate` beats `.btn` when an
+ * element carries both. The APPLIED section's HUD class names (`.shop`,
+ * `.pack`, …) never match anything here and cost nothing.
+ */
+import '../styles/ui.css';
 
 import type { ZodTypeAny } from 'zod';
 import {
@@ -7,9 +21,12 @@ import {
   ANIMAL_CHICKEN_RED,
   CHAR_PROMO_IDLE,
   CHAR_ANIMS,
+  DECOR_STREET_LAMP,
+  STREET_LAMP_LOOK,
 } from '@tillhaven/shared/config';
 import { sprite, animatedSprite } from '../lib/sprite.js';
 import { messageFor, fieldErrors, codeOf } from '../net/errors.js';
+import { heroSkyAt } from './heroSky.js';
 
 /**
  * Shared behaviour for /login and /register.
@@ -170,14 +187,87 @@ function decorate(): void {
   }
 
   const scene = document.querySelector<HTMLElement>('[data-scene]');
-  if (scene) {
-    scene.append(
-      sprite(CROPS.strawberry.sheet, CROPS.strawberry.stageFrames.at(-1)!, { scale: 2 }),
-      animatedSprite(CHAR_PROMO_IDLE, 0, CHAR_ANIMS.idle.framesPerDirection, CHAR_ANIMS.idle.fps, {
-        scale: 2,
-      }),
-      animatedSprite(ANIMAL_CHICKEN_RED, 0, 4, 5, { scale: 2 }),
-      sprite(CROPS.potato.sheet, CROPS.potato.stageFrames.at(-1)!, { scale: 2 }),
+  if (scene) buildScene(scene);
+}
+
+/**
+ * The layers an idle farmer is made of, in paint order.
+ *
+ * `CHAR_PROMO_IDLE` is the skin strip alone — its note in `assets.ts` says so —
+ * and on its own it renders a bare figure with no eyes, hair or clothes. Same
+ * fix, same reason and the same fixed appearance as `landing.ts`'s walking
+ * farmer: stack the strips the way the game composes a character.
+ */
+const IDLE_FARMER_LAYERS = ['skin/1', 'eyes/female-brown', 'hair/lyria-brown', 'clothes/green'];
+
+function idleFarmer(scale: number): HTMLElement {
+  const box = document.createElement('span');
+  box.className = 'farmer';
+  box.style.width = `${CHAR_PROMO_IDLE.frameWidth * scale}px`;
+  box.style.height = `${CHAR_PROMO_IDLE.frameHeight * scale}px`;
+
+  for (const layer of IDLE_FARMER_LAYERS) {
+    const strip = animatedSprite(
+      { ...CHAR_PROMO_IDLE, key: `char-idle-${layer.replace('/', '-')}`, path: `/assets/character/idle/${layer}.png` },
+      0,
+      CHAR_ANIMS.idle.framesPerDirection,
+      CHAR_ANIMS.idle.fps,
+      { scale },
     );
+    strip.classList.add('farmer__layer');
+    box.append(strip);
+  }
+  return box;
+}
+
+/** The lit/unlit lamp, cropped from the pack's two-lamp sheet. */
+function lampSprite(state: 'off' | 'lit', scale: number): HTMLElement {
+  const { x, y, width, height } = STREET_LAMP_LOOK[state];
+  const box = document.createElement('span');
+  box.className = `sprite auth__lamp-${state}`;
+  box.style.width = `${width * scale}px`;
+  box.style.height = `${height * scale}px`;
+  box.style.backgroundImage = `url("${DECOR_STREET_LAMP.path}")`;
+  box.style.backgroundSize = `${DECOR_STREET_LAMP.width * scale}px ${DECOR_STREET_LAMP.height * scale}px`;
+  box.style.backgroundPosition = `-${x * scale}px -${y * scale}px`;
+  return box;
+}
+
+/**
+ * The card's header: a small window onto the same farm, at the same hour.
+ *
+ * **It runs the landing page's clock, deliberately.** `heroSkyAt` is the same
+ * pure function the hero band uses, which is the same one `game/dayNight.ts`
+ * uses, so a visitor who reads the pitch at dusk and then clicks "Log in" does
+ * not walk into a different afternoon. It is the cheapest possible way to make
+ * three separate pages feel like one place.
+ */
+function buildScene(scene: HTMLElement): void {
+  const lamp = document.createElement('span');
+  lamp.className = 'auth__lamp';
+  lamp.append(lampSprite('off', 2), lampSprite('lit', 2));
+
+  const tint = document.createElement('span');
+  tint.className = 'auth__tint';
+
+  scene.append(
+    sprite(CROPS.strawberry.sheet, CROPS.strawberry.stageFrames.at(-1)!, { scale: 2 }),
+    idleFarmer(2),
+    lamp,
+    animatedSprite(ANIMAL_CHICKEN_RED, 0, 4, 5, { scale: 2 }),
+    sprite(CROPS.potato.sheet, CROPS.potato.stageFrames.at(-1)!, { scale: 2 }),
+    tint,
+  );
+
+  const paint = (): void => {
+    const sky = heroSkyAt(Date.now());
+    tint.style.opacity = String(sky.tint);
+    lamp.style.setProperty('--glow', String(sky.lamp));
+  };
+
+  paint();
+  // Frozen after the first paint under reduced motion — see `landing.ts`.
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    window.setInterval(paint, 250);
   }
 }

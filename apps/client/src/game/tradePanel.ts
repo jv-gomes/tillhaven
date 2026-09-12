@@ -124,7 +124,7 @@ export class TradePanel {
         <span class="trade__title">Trade</span>
         <span class="trade__expiry" data-expiry></span>
         <button class="trade__history-toggle" type="button" data-toggle-history>History</button>
-        <button class="trade__close" type="button" data-close aria-label="Close trade">×</button>
+        <button class="trade__close" type="button" data-close aria-label="Close trade"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
       </header>
       <div class="trade__alert" data-alert hidden role="alert"></div>
       <div class="trade__body" data-body></div>
@@ -513,7 +513,18 @@ export class TradePanel {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'traderow__remove';
-        remove.textContent = '×';
+        /*
+         * The pack's own cross, not the character. Column 15 of
+         * `ui-button.png`'s 16px icon grid — the same glyph every panel's close
+         * button wears since U3-7, so "remove this" reads the same everywhere.
+         * `aria-hidden` on the glyph because the button already says what it
+         * removes, and the item's name is the part that matters.
+         */
+        const removeIcon = document.createElement('i');
+        removeIcon.className = 'ui-icon';
+        removeIcon.style.setProperty('--icon-col', '15');
+        removeIcon.setAttribute('aria-hidden', 'true');
+        remove.append(removeIcon);
         remove.setAttribute('aria-label', `Remove ${name.textContent} from your offer`);
         remove.addEventListener('click', () => {
           const next = trade.you.items.filter((i) => i.itemId !== entry.itemId);

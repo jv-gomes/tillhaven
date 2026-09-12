@@ -8,16 +8,125 @@
  */
 
 /* ------------------------------------------------------------------ *
+ * The night register (U3-3)
+ *
+ * The page is a day. The masthead, the hero and the closer are OUTSIDE, on the
+ * game's own deep blue; the reading sections between them are paper, because
+ * that is where there is prose to read. The split is not decoration — night is
+ * the farm working while you are gone, paper is you reading about it — and it
+ * means the last thing you see before `/play` and the first thing you see
+ * after it are the same colour.
+ *
+ * **`--night-ink`, never `--paper`, for text in here.** `--paper` is a reading
+ * colour and inverts in the dark theme; this sky is depicted and does not. The
+ * pairing is pinned in `contrast.test.ts`, which also proves why: dark-theme
+ * `--paper` on `--night` measures 1.34:1.
+ * ------------------------------------------------------------------ */
+
+.masthead,
+.hero,
+.closer {
+  --ink: var(--night-ink);
+  --ink-soft: var(--night-ink-soft);
+  --ink-faint: var(--night-ink-soft);
+  --line: #0d3c50;
+
+  color: var(--night-ink);
+  background: var(--night);
+}
+
+/*
+ * A panel inside the night register is a LIT WINDOW, not a hole in it.
+ *
+ * **Every colour here is pinned, not tokenised, and both halves of that cost a
+ * bug.** Letting the night overrides cascade in made the plot demo vanish —
+ * cream ink on a transparent fill. Pinning only the ink then broke the dark
+ * theme instead: `--paper-raised` inverts to #123040 after dark, so the panel
+ * header rendered #2a1018 on navy and "THE PLOT" disappeared, which is the
+ * same 1.x:1 failure from the opposite direction.
+ *
+ * This panel is a picture of the daytime farm. The daytime farm has no dark
+ * mode, and neither does a picture of it — `.plot__soil` below already pins
+ * its world colours for exactly this reason, and this is that rule applied one
+ * level up. `contrast.test.ts` checks the pairs.
+ */
+.hero .panel,
+.closer .panel {
+  --paper: #f2e3ce;
+  --paper-sunk: #e6d2b5;
+  --paper-raised: #fbf1e2;
+  --ink: #2a1018;
+  --ink-soft: #6d4738;
+  --ink-faint: #6f5847;
+  --line: #2a1018;
+  /* Resolves through `--ink`, so the letterpress shadow came out cream too. */
+  --shadow-hard: 5px 5px 0 #01161f;
+
+  color: #2a1018;
+  background: #fbf1e2;
+}
+
+.masthead {
+  border-bottom-color: #0d3c50;
+}
+
+/*
+ * The hero is the top of the sky and the closer is the bottom of it, so both
+ * fall off toward `--night-deep` at the page edge. A gradient rather than a
+ * flat fill because the band at the hero's foot is a horizon, and a horizon
+ * needs somewhere to be the horizon of.
+ */
+.hero {
+  background: linear-gradient(var(--night), var(--night-deep));
+}
+
+.closer {
+  background: linear-gradient(var(--night-deep), var(--night));
+}
+
+/*
+ * Buttons on the night register.
+ *
+ * The hard offset shadow is the letterpress idiom and belongs on paper; out
+ * here it would be a black rectangle behind a dark button. The primary action
+ * is lamplight instead — `--lamp` on `--ink`, 11.3:1 — and the secondary is an
+ * outline, because two filled buttons side by side is two primary actions.
+ */
+.masthead .btn,
+.hero .btn,
+.closer .btn {
+  box-shadow: none;
+  border-color: var(--lamp);
+  background: transparent;
+  color: var(--night-ink);
+}
+
+.masthead .btn:hover,
+.hero .btn:hover,
+.closer .btn:hover {
+  transform: none;
+  background: #0d3c50;
+}
+
+.masthead .btn--primary,
+.hero .btn--primary,
+.closer .btn--primary {
+  background: var(--lamp);
+  color: #2a1018;
+}
+
+.masthead .btn--primary:hover,
+.hero .btn--primary:hover,
+.closer .btn--primary:hover {
+  background: #ffd968;
+}
+
+/* ------------------------------------------------------------------ *
  * Hero
  * ------------------------------------------------------------------ */
 
-/*
- * Deliberately plain. An earlier version had a soil band behind the fold, but
- * its top edge cut straight through the headline at most viewport heights, and
- * the plot panel is already carrying this section. One loud element, not two.
- */
 .hero {
-  padding-block: clamp(3rem, 8vw, 6rem) clamp(3rem, 8vw, 5rem);
+  padding-block: clamp(2.5rem, 7vw, 4.5rem) 0;
 }
 
 .hero__grid {
@@ -38,12 +147,12 @@
   font-size: clamp(2.6rem, 7vw, 4.4rem);
 }
 
-/* The phrase the whole pitch turns on, struck through with a band of soil. */
+/* The phrase the whole pitch turns on, underlit rather than struck through. */
 .hero__title em {
   font-style: normal;
   /* A background gradient rather than a positioned pseudo-element: no stacking
      context to fight with, and it wraps correctly across lines. */
-  background-image: linear-gradient(var(--soil), var(--soil));
+  background-image: linear-gradient(var(--lamp), var(--lamp));
   background-repeat: no-repeat;
   background-position: 0 88%;
   background-size: 100% 0.26em;
@@ -67,6 +176,168 @@
 .hero__meta {
   margin-top: 1.75rem;
   color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------------ *
+ * The band — the hero's horizon (U3-3)
+ *
+ * A strip of real farm running the game's twenty-minute day. `pages/heroSky.ts`
+ * computes the tint and the lamp from `darknessAt(timeOfDayAt(now).phase)` —
+ * the same two pure functions `game/dayNight.ts` calls — so the site and the
+ * farm cannot show different skies at one instant.
+ *
+ * **The tint is on the band, not the hero.** Cycling the whole panel would put
+ * the cream headline on a surface that is 11.9:1 at midnight and unreadable at
+ * noon. Confined here it costs no legibility, and the effect survives intact:
+ * the strip visibly darkens and lights its lamp while the page is read.
+ * ------------------------------------------------------------------ */
+
+/*
+ * A sibling of `.hero__grid`, not a child — full width of the section, because
+ * a horizon that stops short of the window edge is a picture of a horizon.
+ * Putting it inside the grid also cost an afternoon: as the second of three
+ * children it spanned `1 / -1`, pushed the plot panel onto a third row, and
+ * sent six growing crops a thousand pixels below the fold.
+ */
+.band {
+  position: relative;
+  margin-top: clamp(2rem, 5vw, 3.5rem);
+  isolation: isolate;
+  overflow: hidden;
+}
+
+/*
+ * Grass.
+ *
+ * **A flat fill, and that is not a shortcut.** The farm's ground tile is
+ * `GRASS_FILL_FRAME` at (9,2) of `tileset-grass-spring.png`, which
+ * `assets.ts` records as "`#79bf56`, fully opaque and a single colour" — so
+ * this rectangle is pixel-identical to tiling that tile.
+ *
+ * The first attempt did try to tile it, with `background-position: -144px
+ * -32px` and `repeat`, and produced the sheet's decorative autotile edges
+ * across the whole strip: `background-repeat` repeats the ENTIRE image offset
+ * by the position, not the 16px window the position points at. CSS has no
+ * crop-then-repeat for one cell of an atlas. Worth knowing before the next
+ * person reaches for the same three lines.
+ */
+/*
+ * 208px: the tallest thing in the strip is the farmhouse, whose measured
+ * window is 87 source pixels drawn at scale 2 — 174 — and the remainder is
+ * headroom so the band reads as a field with sky over it rather than a row of
+ * sprites on a rule.
+ *
+ * **This number was wrong twice, both times by guessing the gap instead of
+ * measuring the sprite.** 96 clipped the roof off; 152 took the chimney. Under
+ * `align-items: flex-end` with `overflow: hidden` a too-short band does not
+ * overflow or complain, it silently deletes the top of the picture.
+ */
+.band__scene {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(0.75rem, 3vw, 2.25rem);
+  min-height: 208px;
+  background-color: #79bf56;
+}
+
+/*
+ * The night sheet. `--night` at an opacity `heroSky.ts` caps at 0.55, which is
+ * the number `dayNight.ts` uses for the farm and the reason a player who
+ * arrives at midnight can still see what they are looking at.
+ */
+.band__tint {
+  position: absolute;
+  inset: 0;
+  background: var(--night);
+  pointer-events: none;
+  opacity: 0;
+}
+
+/*
+ * The lamp turns on by cross-fading the pack's OWN two frames — the sheet
+ * ships an unlit lamp and a lit one side by side (`STREET_LAMP_LOOK`). A CSS
+ * glow over a dark sprite would have been the obvious move and would have
+ * looked like a glow over a dark sprite.
+ *
+ * Above the tint, because a lamp that dims as night falls is a lamp that is
+ * not on.
+ */
+.band__lamp {
+  position: relative;
+  z-index: 1;
+  align-self: flex-end;
+}
+
+/*
+ * A layered character, the way the game builds one: skin, then eyes, hair and
+ * clothes stacked in register on top of it. Each strip is the same size and
+ * the same animation, so they only line up if they are absolutely positioned
+ * against a box of exactly one frame.
+ */
+.farmer {
+  position: relative;
+  flex: none;
+}
+
+.farmer__layer {
+  position: absolute;
+  inset: 0;
+}
+
+.band__lamp-lit {
+  position: absolute;
+  inset: 0;
+  opacity: var(--glow, 0);
+}
+
+/* Light spills. One soft pool on the grass, tied to the same --glow. */
+.band__lamp::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  width: 190px;
+  height: 44px;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgb(255 199 27 / 34%), transparent 70%);
+  opacity: var(--glow, 0);
+  pointer-events: none;
+}
+
+/* The readout: proof the clock is running, not a caption about it. */
+.band__readout {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding: 0.55rem 1rem;
+  background: var(--night-deep);
+  color: var(--night-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.band__time {
+  color: var(--lamp);
+  font-variant-numeric: tabular-nums;
+}
+
+.band__note {
+  margin-left: auto;
+  color: var(--night-ink-soft);
+  text-transform: none;
+}
+
+@media (max-width: 46rem) {
+  .band__note {
+    margin-left: 0;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -145,9 +416,8 @@
   padding: 0.4rem 0.25rem 0.5rem;
   text-align: center;
   font-family: var(--font-display);
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 400;
   text-transform: uppercase;
   color: var(--world-ink);
   background: color-mix(in srgb, var(--world-paper) 70%, transparent);
@@ -155,8 +425,7 @@
 
 .plot__timer {
   display: block;
-  font-size: 0.68rem;
-  letter-spacing: 0.02em;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -187,9 +456,8 @@
   background: var(--grass-deep);
   color: #fbf1e2;
   font-family: var(--font-display);
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
   border-bottom: var(--rule) solid var(--line);
 }
@@ -261,9 +529,8 @@
 
 .stage__n {
   font-family: var(--font-display);
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-size: 10px;
+  font-weight: 400;
   text-transform: uppercase;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
@@ -313,8 +580,8 @@
 
 .entry__name {
   font-size: 1.15rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.015em;
 }
 
 /* A ledger, not a bullet list: these are real numbers from the shared config. */
@@ -323,8 +590,7 @@
   display: grid;
   gap: 0.3rem;
   font-family: var(--font-display);
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
+  font-size: 12px;
   text-transform: uppercase;
 }
 

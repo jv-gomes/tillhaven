@@ -67,7 +67,7 @@ export class ShippingPanel {
     this.root.innerHTML = `
       <header class="shipping__head">
         <span class="shipping__title">Shipping box</span>
-        <button class="shipping__close" type="button" data-close aria-label="Close shipping box">×</button>
+        <button class="shipping__close" type="button" data-close aria-label="Close shipping box"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
       </header>
       <p class="shipping__hint" data-hint></p>
 

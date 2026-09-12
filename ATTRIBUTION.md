@@ -59,7 +59,9 @@ None yet. See the Phase 14 backlog in `ROADMAP.md`.
 
 ## Fonts
 
-Two bundled typefaces, both **SIL Open Font License 1.1**, added in Phase U.
+Three bundled typefaces, all **SIL Open Font License 1.1**. Two were added in
+Phase U; Bitter joined them in Phase U3, when the site stopped using system
+fonts.
 
 Until then the answer here was "none bundled — the site uses system font stacks
 only, so there is nothing to licence", and `hud.css` recorded the reason: adding
@@ -88,15 +90,27 @@ provenance and subsetting notes.
   `apps/client/public/fonts/silkscreen-OFL.txt`
 - **Files:** `silkscreen-{400,700}-latin.woff2` and their `-ext` pairs
 
+### Bitter — body text
+
+- **Author:** The Bitter Project Authors
+- **Source:** <https://github.com/solmatas/BitterPro>
+- **Licence:** SIL Open Font License 1.1, shipped verbatim as
+  `apps/client/public/fonts/bitter-OFL.txt`
+- **Files:** `bitter-latin.woff2`, `bitter-latin-ext.woff2` (variable, weights
+  400–700)
+- **Reserved Font Name:** "Bitter Pro" — note that this differs from the family
+  name, so the caveat below applies to that string, not to "Bitter".
+
 ### The obligations, and what they forbid
 
 - The licence text ships alongside the fonts. ✅
 - Credit is given. ✅ — `packages/shared/src/config/credits.ts` is the canonical
   list, rendered at `/credits`. `config.test.ts` fails the build if a `.woff2`
   in `public/fonts/` has no credit row or its licence file is missing.
-- **Reserved Font Names may not be reused on a modified copy.** If either face
-  is ever re-subsetted, hinted or patched, the result must not be called
-  "Pixelify Sans" or "Silkscreen" — rename the file *and* the `font-family`.
+- **Reserved Font Names may not be reused on a modified copy.** If any of the
+  three is ever re-subsetted, hinted or patched, the result must not be called
+  "Pixelify Sans", "Silkscreen" or "Bitter Pro" — rename the file *and* the
+  `font-family`.
 - The fonts may not be sold on their own.
 - They are **self-hosted**; nothing at runtime requests `fonts.googleapis.com`
   or `fonts.gstatic.com`, so no player's IP is handed to a third party.

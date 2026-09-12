@@ -1,5 +1,19 @@
 import '../styles/base.css';
 import '../styles/landing.css';
+/*
+ * `ui.css` AFTER `base.css`, and that order is the point (Phase U3).
+ *
+ * It carries the three `@font-face` blocks and the pack's own primitives,
+ * scoped to `.hud, .ui-scope` — a hook `ui.css` has declared since Phase U and
+ * nothing outside the game had ever used. The site uses it now for the night
+ * register: the hero, the auth card and the boot curtain wear the same timber
+ * the HUD does.
+ *
+ * Later file wins at equal specificity, so `.ui-plate` beats `.btn` when an
+ * element carries both. The APPLIED section's HUD class names (`.shop`,
+ * `.pack`, …) never match anything here and cost nothing.
+ */
+import '../styles/ui.css';
 import { CROP_BLURBS } from './cropBlurbs.js';
 
 import {
@@ -13,10 +27,11 @@ import {
   ANIMAL_CHICKEN_BABY_YELLOW,
   CHAR_PROMO_WALK,
   CHAR_ANIMS,
-  OBJ_TINY_HOUSE,
-  OBJ_TINY_HOUSE_LOOK,
+  HOUSE_TIER_ART,
   OBJ_MAPLE_TREE,
   MAPLE_TREE,
+  DECOR_STREET_LAMP,
+  STREET_LAMP_LOOK,
   VIP_BENEFITS,
   VIP_DURATION_MS,
   STARTING_PLOTS,
@@ -31,6 +46,7 @@ import {
 } from '@tillhaven/shared/config';
 
 import { sprite, animatedSprite } from '../lib/sprite.js';
+import { CYCLE_MINUTES, heroSkyAt, segmentLabel } from './heroSky.js';
 
 /* ------------------------------------------------------------------ *
  * Formatting
@@ -378,27 +394,167 @@ function buildCloserScene(scene: HTMLElement): void {
     sprite(OBJ_MAPLE_TREE, MAPLE_TREE_FRAME, { scale: 2 }),
     sprite(OBJ_MAPLE_TREE, MAPLE_TREE_FRAME, { scale: 2 }),
     houseSprite(2),
-    animatedSprite(CHAR_PROMO_WALK, 0, CHAR_ANIMS.walk.framesPerDirection, CHAR_ANIMS.walk.fps, {
-      scale: 2,
-    }),
+    promoFarmer(2),
     animatedSprite(ANIMAL_CHICKEN_RED, 0, 4, 5, { scale: 2 }),
   );
 }
 
 /**
- * The tiny house kit holds many wall/roof/door parts spanning the whole
- * image, so a house is a cropped window onto it rather than a single frame —
- * same pattern as `House.ts` uses in the actual game scene. `OBJ_TINY_HOUSE_LOOK`
- * is the one complete, ready-to-use house silhouette T-7.04 measured on this
- * sheet (see its doc comment in the shared config).
+ * The house the farm actually draws.
+ *
+ * **This used to be `OBJ_TINY_HOUSE_LOOK`, and that was the wrong window.**
+ * Its own comment in `assets.ts` says what it is — the tiny-house kit's
+ * *"house SILHOUETTES (roof+wall, no door/window)"* — so the landing page and
+ * the closer scene have been advertising a doorless shed while the game drew a
+ * farmhouse. `HOUSE_TIER_ART[0]` is the tier-0 farmhouse `Farm.ts` puts on the
+ * map, door and windows included, and is the same lookup the game uses.
+ *
+ * A cropped window onto an `IMAGES` kit rather than a spritesheet frame, which
+ * is the pattern every assembled building in this pack needs.
  */
 function houseSprite(scale: number): HTMLElement {
-  const { x, y, width, height } = OBJ_TINY_HOUSE_LOOK;
+  const { sheet, look } = HOUSE_TIER_ART[0]!;
   const box = el('span', 'sprite');
+  box.style.width = `${look.width * scale}px`;
+  box.style.height = `${look.height * scale}px`;
+  box.style.backgroundImage = `url("${sheet.path}")`;
+  box.style.backgroundSize = `${sheet.width * scale}px ${sheet.height * scale}px`;
+  box.style.backgroundPosition = `-${look.x * scale}px -${look.y * scale}px`;
+  return box;
+}
+
+/* ------------------------------------------------------------------ *
+ * The band — the hero's live farm strip (U3-3)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A strip of farm running the game's twenty-minute day.
+ *
+ * **The tint sits on the band, not on the hero.** The hero's ground is a fixed
+ * night blue so that every text-on-background pair in it is a constant the
+ * contrast test can pin; if the whole panel cycled, the cream headline would
+ * be sitting on a surface that is 11.9:1 at midnight and unreadable at noon.
+ * Confining the cycle to the band buys the whole effect and costs no
+ * legibility — and it is the only motion this page adds.
+ *
+ * Everything in it is a real frame from the game's spritesheets, like the rest
+ * of this page: the same house, the same maples, the same red chicken and the
+ * same walking farmer the farm scene draws.
+ */
+function buildBand(root: HTMLElement): void {
+  const scene = root.querySelector<HTMLElement>('[data-band-scene]');
+  const tint = root.querySelector<HTMLElement>('[data-band-tint]');
+  const clockOut = root.querySelector<HTMLElement>('[data-band-clock]');
+  const segmentOut = root.querySelector<HTMLElement>('[data-band-segment]');
+  const note = root.querySelector<HTMLElement>('[data-band-note]');
+  if (!scene || !tint || !clockOut || !segmentOut || !note) return;
+
+  const lamp = el('span', 'band__lamp');
+  lamp.append(lampSprite('off', 2), lampSprite('lit', 2));
+
+  scene.append(
+    sprite(OBJ_MAPLE_TREE, MAPLE_TREE_FRAME, { scale: 2 }),
+    houseSprite(2),
+    lamp,
+    promoFarmer(2),
+    animatedSprite(ANIMAL_CHICKEN_RED, 0, 4, 5, { scale: 2 }),
+    sprite(OBJ_MAPLE_TREE, MAPLE_TREE_FRAME, { scale: 2 }),
+  );
+
+  note.textContent = `A whole day every ${CYCLE_MINUTES} minutes · the same clock the farm runs on`;
+
+  const paint = (): void => {
+    const sky = heroSkyAt(Date.now());
+    tint.style.opacity = String(sky.tint);
+    lamp.style.setProperty('--glow', String(sky.lamp));
+    clockOut.textContent = sky.clock;
+    segmentOut.textContent = segmentLabel(sky.segment);
+  };
+
+  paint();
+
+  /*
+   * **Polled, not animated.** The cycle moves by about 0.0008 of darkness a
+   * second; a `requestAnimationFrame` loop would repaint sixty times for every
+   * change too small to see, on a page that is mostly read rather than watched.
+   * Four times a second is smooth at this rate and stops when the tab is
+   * hidden, which `setInterval` does on its own.
+   *
+   * `prefers-reduced-motion` freezes it after the first paint. That is the
+   * same call `dayNight.ts` makes — the setting asks for less movement, and a
+   * sky that creeps is movement even though it is slow — and it leaves the
+   * band showing the correct sky rather than an empty box.
+   */
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    window.setInterval(paint, 250);
+  }
+}
+
+/**
+ * The layers a promo farmer is made of, in paint order.
+ *
+ * **`CHAR_PROMO_WALK` is the skin layer and nothing else** — its own note in
+ * `assets.ts` says so: *"Skin layer only, variant 1"*. On its own it renders a
+ * bare figure with no eyes, hair or clothes, which is what the landing page
+ * and the closer scene had been showing since T-8.03. It is the worst sprite
+ * on the page and it is standing in the hero.
+ *
+ * The fix is the one the game already uses (CLAUDE.md §9): stack the strips.
+ * Every layer under `character/<anim>/<layer>/` shares the animation's frame
+ * geometry, so each is `CHAR_PROMO_WALK` with a different path — which is also
+ * why these are built by naming convention rather than added to the manifest,
+ * exactly as the asset rules provide for.
+ *
+ * One fixed appearance, not a random one: the hero must not differ between two
+ * screenshots of the same page.
+ */
+const PROMO_FARMER_LAYERS = [
+  'skin/1',
+  'eyes/female-brown',
+  'hair/lyria-brown',
+  'clothes/green',
+] as const;
+
+/** A dressed farmer walking, as stacked layer strips. */
+function promoFarmer(scale: number): HTMLElement {
+  const box = el('span', 'farmer');
+  box.style.width = `${CHAR_PROMO_WALK.frameWidth * scale}px`;
+  box.style.height = `${CHAR_PROMO_WALK.frameHeight * scale}px`;
+
+  for (const layer of PROMO_FARMER_LAYERS) {
+    const spec = {
+      ...CHAR_PROMO_WALK,
+      key: `char-walk-${layer.replace('/', '-')}`,
+      path: `/assets/character/walk/${layer}.png`,
+    };
+    const strip = animatedSprite(
+      spec,
+      0,
+      CHAR_ANIMS.walk.framesPerDirection,
+      CHAR_ANIMS.walk.fps,
+      { scale },
+    );
+    strip.classList.add('farmer__layer');
+    box.append(strip);
+  }
+
+  return box;
+}
+
+/**
+ * One of the two lamps on `decor-street-lamp.png`, cropped out of it.
+ *
+ * The unlit and lit frames are stacked by `.band__lamp` and cross-faded on the
+ * `--glow` custom property, so the lamp turns on with dusk using the art the
+ * pack drew rather than a gradient pretending to be light.
+ */
+function lampSprite(state: 'off' | 'lit', scale: number): HTMLElement {
+  const { x, y, width, height } = STREET_LAMP_LOOK[state];
+  const box = el('span', `sprite band__lamp-${state}`);
   box.style.width = `${width * scale}px`;
   box.style.height = `${height * scale}px`;
-  box.style.backgroundImage = `url("${OBJ_TINY_HOUSE.path}")`;
-  box.style.backgroundSize = `${OBJ_TINY_HOUSE.width * scale}px ${OBJ_TINY_HOUSE.height * scale}px`;
+  box.style.backgroundImage = `url("${DECOR_STREET_LAMP.path}")`;
+  box.style.backgroundSize = `${DECOR_STREET_LAMP.width * scale}px ${DECOR_STREET_LAMP.height * scale}px`;
   box.style.backgroundPosition = `-${x * scale}px -${y * scale}px`;
   return box;
 }
@@ -427,6 +583,9 @@ function mount(): void {
 
   const vip = document.querySelector<HTMLElement>('[data-vip]');
   if (vip) buildVip(vip);
+
+  const band = document.querySelector<HTMLElement>('[data-band]');
+  if (band) buildBand(band);
 
   const scene = document.querySelector<HTMLElement>('[data-closer-scene]');
   if (scene) buildCloserScene(scene);

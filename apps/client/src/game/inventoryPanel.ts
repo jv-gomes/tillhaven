@@ -120,7 +120,7 @@ export class InventoryPanel {
     this.root.innerHTML = `
       <header class="pack__head">
         <span class="pack__title" data-title>Backpack</span>
-        <button class="pack__close" type="button" data-close aria-label="Close inventory">×</button>
+        <button class="pack__close" type="button" data-close aria-label="Close inventory"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
       </header>
 
       <section class="pack__section" data-chest-section hidden aria-label="Chest">

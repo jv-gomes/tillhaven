@@ -177,7 +177,7 @@ export class IdlePanel {
       <section class="idle__panel" data-popover hidden aria-label="Idle mode">
         <header class="idle__head">
           <span class="idle__title">Idle mode</span>
-          <button class="idle__close" type="button" data-close aria-label="Close idle settings">×</button>
+          <button class="idle__close" type="button" data-close aria-label="Close idle settings"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
         </header>
 
         <label class="idle__switch">

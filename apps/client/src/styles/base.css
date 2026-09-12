@@ -51,6 +51,43 @@
   --barn-bright: #ae4924;
   --night: #052a3a;
 
+  /*
+   * The night register (Phase U3).
+   *
+   * The site has two grounds now, and the split carries meaning rather than
+   * decorating: **night is the farm working while you are gone, paper is you
+   * reading about it.** Hero, auth card and closing CTA are night; the reading
+   * sections stay paper. The page therefore ends on the same colour `/play`
+   * begins on, and the seam a player used to cross disappears.
+   *
+   * `--night` itself is not new — it has been declared above since the landing
+   * page shipped, because it is the deep blue the pack's own art carries and
+   * the one colour `base.css` and `hud.css` already agreed on. These are the
+   * tokens that make it usable as a *surface* rather than an accent.
+   *
+   * **They do not flip in the dark theme, and that is the point.** Every token
+   * above is a reading colour and inverts below; these five are a depicted
+   * night sky. `--paper` becomes #0b1f2a after dark, so a night panel that
+   * wrote `color: var(--paper)` would paint dark-on-dark and vanish — which is
+   * exactly the bug `hud.css` hit from the other direction when it borrowed
+   * `var(--night)` from a stylesheet the game page never loads. Night text uses
+   * `--night-ink`, which is cream in both themes.
+   */
+  --night-deep: #03202c;
+  --night-ink: #f2e3ce;
+  --night-ink-soft: #b59d84;
+  /*
+   * Lamp light. **Sampled, not chosen** — `decor-street-lamp.png` at (39,13),
+   * the amber ring inside the lantern glass, measured with `scripts/lib/png.mjs`
+   * the same way `--panel-fill` was sampled off `Clock/Extras.png`. The flame's
+   * hotter core (#ffeb47, 16px) reads lemon rather than lamplight at text
+   * sizes; this is the colour the glass actually throws.
+   *
+   * 9.61:1 on `--night` as text, and 11.33:1 the other way round with `--ink`
+   * on it, so it works as the lit CTA's fill as well as its accent.
+   */
+  --lamp: #ffc71b;
+
   --rule: 3px;
   /* Borders are their own token, not --ink. On paper they are the same thing;
      in the dark theme --ink becomes cream, and 3px cream rules across a page
@@ -59,10 +96,36 @@
   --shadow-hard: 5px 5px 0 var(--ink);
   --shadow-hard-sm: 3px 3px 0 var(--ink);
 
-  --font-display: ui-monospace, 'SFMono-Regular', 'SF Mono', 'Cascadia Mono',
+  /*
+   * Three faces, three jobs (Phase U3). See `public/fonts/README.md`.
+   *
+   * Until this phase the site had none of them: `--font-display` was
+   * `ui-monospace` set in uppercase at `letter-spacing: 0.16em`, which is what
+   * a label looks like when you do not have a label face. `ui.css` had been
+   * carrying the real one since Phase U and the site never loaded it.
+   *
+   * **`--font-display` is Silkscreen and therefore takes no letter-spacing.**
+   * The spacing is drawn into the face. Every rule that used to add 0.16em had
+   * to lose it in the same commit, or the labels double-space — `ui.css`
+   * recorded the same lesson when it deleted `var(--mono)`.
+   *
+   * `--font-pixel` is deliberately rare: Pixelify Sans appears on the night
+   * register and nowhere else, so that arriving in the game is a continuation
+   * of the hero rather than a new typeface.
+   */
+  --font-display: 'Silkscreen', ui-monospace, 'SFMono-Regular', 'SF Mono',
+    'Cascadia Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+  --font-pixel: 'Pixelify Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Bitter', Georgia, 'Times New Roman', serif;
+  /*
+   * Real monospace, for the two places a label face is wrong: inline `code` in
+   * the legal pages and the licence strings on `/credits`. Those read as
+   * literal text and need character-cell alignment, which Silkscreen does not
+   * give. It replaces `var(--mono, …)`, a token Phase U deleted and left two
+   * stylesheets quietly falling through to its default argument.
+   */
+  --font-mono: ui-monospace, 'SFMono-Regular', 'SF Mono', 'Cascadia Mono',
     'Roboto Mono', Menlo, Consolas, monospace;
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
 
   --measure: 62ch;
   --gutter: clamp(1.25rem, 4vw, 3rem);
@@ -103,7 +166,7 @@ body {
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 17px;
-  line-height: 1.6;
+  line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
@@ -126,13 +189,22 @@ a {
   color: inherit;
 }
 
+/*
+ * Headings are Bitter, inherited from `body` — **not** Pixelify Sans. The
+ * display face is reserved for the night register (see `--font-pixel`), so it
+ * carries the hero and the boot curtain and nothing else. A pixel face on every
+ * section heading would spend its whole effect in the first screenful.
+ *
+ * 700 is Bitter's variable maximum. 800 asked the browser to synthesise a
+ * weight that does not exist, which is a smeared outline, not a bolder one.
+ */
 h1,
 h2,
 h3 {
   margin: 0;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
   text-wrap: balance;
 }
 
@@ -145,25 +217,32 @@ p {
  * Type roles
  * ------------------------------------------------------------------ */
 
-/* The ledger voice: labels, timers, quantities, anything countable. */
+/*
+ * The ledger voice: labels, timers, quantities, anything countable.
+ *
+ * **Sizes are whole pixels, not rem, and the letter-spacing is gone.**
+ * Silkscreen is drawn on an 8px grid and renders crisply only at multiples of
+ * it; `0.72rem` is 12.24px, which lands the stems between device pixels and
+ * gives back exactly the softness this face was chosen to remove. `ui.css`
+ * reached the same conclusion for the HUD in Phase U and this is the same rule
+ * on the other surface.
+ */
 .mono {
   font-family: var(--font-display);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
 }
 
 .eyebrow {
   font-family: var(--font-display);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.2em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
   color: var(--ink-soft);
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .eyebrow::after {
@@ -200,9 +279,8 @@ p {
   background: var(--paper-raised);
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
   text-decoration: none;
   cursor: pointer;
@@ -264,9 +342,8 @@ p {
   background: var(--ink);
   color: var(--paper);
   font-family: var(--font-display);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
 }
 
@@ -290,14 +367,26 @@ p {
   padding-block: 0.6rem;
 }
 
+/*
+ * The wordmark is the one place on the site that gets the display face.
+ *
+ * It sat in `ui-monospace` at `letter-spacing: 0.22em` — a name set in
+ * whatever font the reader's OS happened to ship, beside a leek sprite drawn
+ * at 4x. Pixelify Sans is the face the game's own HUD writes "Tillhaven" in,
+ * so the mark is now the same letters in both places.
+ *
+ * 20px is two whole multiples of the face's 10px grid. The tracking is in
+ * whole pixels for the same reason: `0.22em` of a 20px face is 4.4px, and the
+ * fractional part puts every stem after the first between device pixels.
+ */
 .wordmark {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  font-family: var(--font-display);
-  font-size: 0.95rem;
-  font-weight: 800;
-  letter-spacing: 0.22em;
+  font-family: var(--font-pixel);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
   text-transform: uppercase;
   text-decoration: none;
   white-space: nowrap;

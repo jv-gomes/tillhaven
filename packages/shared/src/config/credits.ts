@@ -72,6 +72,15 @@ export const CREDITS: readonly Credit[] = [
     ],
   },
   {
+    work: 'Bitter (body text)',
+    author: 'The Bitter Project Authors',
+    url: 'https://github.com/solmatas/BitterPro',
+    kind: 'font',
+    licence: 'SIL Open Font License 1.1',
+    licenceFile: '/fonts/bitter-OFL.txt',
+    files: ['fonts/bitter-latin.woff2', 'fonts/bitter-latin-ext.woff2'],
+  },
+  {
     work: 'Phaser (game engine)',
     author: 'Phaser Studio',
     url: 'https://phaser.io',

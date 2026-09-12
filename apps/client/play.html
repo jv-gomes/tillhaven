@@ -8,6 +8,23 @@
     <meta name="theme-color" content="#052a3a" />
     <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
     <style>
+      /*
+       * The boot curtain (U3-5).
+       *
+       * **Inline, and that is the whole point.** This markup has to paint
+       * before the module graph is parsed, before Phaser exists and before any
+       * stylesheet it would import has been fetched — otherwise the first thing
+       * a player sees after leaving the landing page is an empty blue
+       * rectangle. Everything here is therefore duplicated from the night
+       * register in `base.css` rather than referenced from it, and the
+       * duplication is the feature.
+       *
+       * The fonts are not duplicated: `@font-face` comes from `ui.css` via the
+       * module, so the curtain's first frame uses the fallback stack and swaps
+       * when the face lands. That is correct — `font-display: swap` means text
+       * is readable immediately, and a curtain that waited for a webfont would
+       * be the blank screen this replaces.
+       */
       html,
       body {
         margin: 0;
@@ -26,31 +43,170 @@
         image-rendering: pixelated;
       }
 
-      /* Shown only if Phaser never boots, so a failure is never a blank screen. */
-      #fallback {
+      #boot {
         position: fixed;
         inset: 0;
+        z-index: 10;
         display: grid;
         place-content: center;
-        gap: 1rem;
+        justify-items: center;
+        gap: 1.5rem;
         padding: 2rem;
-        color: #f2e3ce;
-        font-family: ui-monospace, Menlo, Consolas, monospace;
-        font-size: 0.8rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
         text-align: center;
+        background: linear-gradient(#052a3a, #03202c);
+        color: #f2e3ce;
+        font-family: 'Pixelify Sans', system-ui, -apple-system, sans-serif;
+        transition: opacity 420ms ease;
       }
 
-      #fallback a {
-        color: #ee9d51;
+      #boot[hidden] {
+        display: none;
+      }
+
+      /* The dissolve. Removed from the DOM once it finishes — see Preload. */
+      #boot.is-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      #boot-mark {
+        margin: 0;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+      }
+
+      /*
+       * The pack's own bar, from `ui-bars.png`. It replaces a
+       * `Phaser.GameObjects.Rectangle` in flat green.
+       *
+       * **`ui-bars.png` has no empty track, and that cost a rebuild.** `ui.css`
+       * described its two bands as "empty" at y101 and "filled" at y116; a
+       * pixel scan says they are the same FULL bar in two colours — green
+       * (#6ebd3c core, #8a3625 frame) and cyan (#2eafc7, same frame). The sheet
+       * is a colour catalogue, not a state pair. So the trough is drawn here in
+       * the bar art's own outline colour and the green bar is the fill, clipped
+       * by width.
+       *
+       * **Not a nine-slice, and the numbers are measured.** A column scan finds
+       * four tracks per row; this one is x3-44, so the window is 42 source
+       * pixels wide and stretching it would pull the end caps out of square.
+       * 42x6 = 252, 9x6 = 54. The scale is hardcoded because `--ui-scale` lives
+       * on `.hud`/`.ui-scope`, in a stylesheet this curtain must paint without.
+       *
+       * A happy consequence: the bar's right-hand leaf ornament is the last
+       * thing to arrive, so the sprout finishes growing exactly at 100%.
+       */
+      /*
+       * The empty groove is **the same bar, unlit** — the identical image and
+       * offset with the colour taken out of it.
+       *
+       * Drawing a groove by hand was tried first (an inset box-shadow in the
+       * art's own sampled #8a3625 and #1c0a18) and double-framed: the fill's
+       * art carries its own frame at rows 2 and 7 of 9, so a second frame
+       * appeared around it wherever the two disagreed by a pixel. Reusing the
+       * art guarantees registration instead of negotiating it, and an unlit bar
+       * is what an empty bar should look like anyway.
+       */
+      #boot-bar {
+        position: relative;
+        width: 252px;
+        height: 54px;
+        background-image: url('/assets/ui-bars.png');
+        background-size: 1152px 960px;
+        background-position: -18px -606px;
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        overflow: hidden;
+      }
+
+      /*
+       * What dims the unlit part: a night-coloured sheet OVER the whole bar,
+       * with the fill stacked above it.
+       *
+       * A `filter` on the parent was tried and cannot work — `saturate(0.12)`
+       * discards the colour, `filter` inherits to children, and no counter-
+       * filter on the fill can put back information that is gone. Stacking
+       * three layers costs one pseudo-element and is exact.
+       */
+      #boot-bar::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background: rgb(5 42 58 / 82%);
+      }
+
+      #boot-fill {
+        position: relative;
+        z-index: 2;
+        width: 0%;
+        height: 100%;
+        background-image: url('/assets/ui-bars.png');
+        background-size: 1152px 960px;
+        background-position: -18px -606px;
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        transition: width 180ms linear;
+      }
+
+      #boot-label {
+        margin: 0;
+        min-height: 1.2em;
+        color: #b59d84;
+        font-family: 'Silkscreen', ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      /* The failure path. Hidden until something actually fails. */
+      #boot-fail {
+        margin: 0;
+        max-width: 44ch;
+        color: #ffc71b;
+        font-family: 'Silkscreen', ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.8;
+        text-transform: uppercase;
+      }
+
+      #boot-fail:not([hidden]) ~ #boot-bar,
+      #boot-fail:not([hidden]) ~ #boot-label {
+        display: none;
+      }
+
+      #boot a {
+        color: #ffc71b;
+      }
+
+      /*
+       * The setting asks for less movement, so the curtain cuts rather than
+       * fades and the bar jumps rather than eases — the same call `dayNight.ts`
+       * makes about the night tint.
+       */
+      @media (prefers-reduced-motion: reduce) {
+        #boot,
+        #boot-fill {
+          transition: none;
+        }
       }
     </style>
   </head>
   <body>
-    <div id="fallback">
-      <p>Tillhaven could not start.</p>
-      <p><a href="/">Back to the farm gate</a></p>
+    <!--
+      Painted before Phaser boots, and still standing if Phaser never does:
+      `Preload` drives the bar and dismisses the curtain, so a module that
+      throws leaves this on screen with its "could not start" copy rather than
+      leaving a blank page.
+    -->
+    <div id="boot">
+      <p id="boot-mark">Tillhaven</p>
+      <p id="boot-fail" hidden>
+        Tillhaven could not start. <a href="/">Back to the farm gate</a>
+      </p>
+      <div id="boot-bar"><div id="boot-fill"></div></div>
+      <p id="boot-label">Waking the farm</p>
     </div>
     <div id="game"></div>
     <script type="module" src="/src/game/main.ts"></script>

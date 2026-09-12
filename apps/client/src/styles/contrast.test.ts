@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+// The same decoder `prepare-assets.mjs` verifies its crops with, so the test
+// reads the shipped art rather than a hex someone typed into this file.
+// @ts-expect-error - plain .mjs helper, no types, shared with the asset scripts
+import { decodePng } from '../../../../scripts/lib/png.mjs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,6 +114,128 @@ describe('the site palette meets WCAG AA', () => {
   });
 });
 
+/**
+ * The night register (U3-1), which is a surface this file has never seen.
+ *
+ * The site grew a second ground: hero, auth card and closing CTA sit on
+ * `--night`, the reading sections stay on `--paper`. Every ratio above is text
+ * on a light background, and **none of them says anything about the dark one**
+ * — a token that is safe on the backgrounds it currently meets is a trap for
+ * whoever writes the next layout, which is the lesson `--ink-faint` already
+ * taught this file from the `--paper-sunk` direction.
+ */
+describe('the night register meets WCAG AA', () => {
+  const night = token(BASE, 'night');
+  const deep = token(BASE, 'night-deep');
+
+  it('keeps --night the deep blue both stylesheets already agreed on', () => {
+    expect(night).toBe('#052a3a');
+    expect(token(HUD, 'night')).toBe(night);
+  });
+
+  it('records the lamp pixel --lamp was sampled from', () => {
+    // Not decoration. The comment is the only record of where the colour came
+    // from, and a "warm this up a bit" that edits the hex without the comment
+    // leaves the next reader with an unsourced value.
+    expect(BASE).toContain('decor-street-lamp.png');
+  });
+
+  it.each([
+    ['night ink on --night', token(BASE, 'night-ink'), night],
+    ['night ink on --night-deep', token(BASE, 'night-ink'), deep],
+    ['quiet night ink on --night', token(BASE, 'night-ink-soft'), night],
+    ['quiet night ink on --night-deep', token(BASE, 'night-ink-soft'), deep],
+    ['--lamp as text on --night', token(BASE, 'lamp'), night],
+    ['--lamp as text on --night-deep', token(BASE, 'lamp'), deep],
+    // The lit CTA is the other way round: ink on a lamp-coloured fill.
+    ['--ink on a --lamp fill', token(BASE, 'ink'), token(BASE, 'lamp')],
+    ['--grass on --night', token(BASE, 'grass'), night],
+  ])('%s', (_label, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(AA);
+  });
+
+  /**
+   * **The reason `--night-ink` exists at all**, pinned so that deleting it as
+   * a duplicate of `--paper` fails here instead of in the browser after dark.
+   *
+   * `--paper` is a reading colour and inverts in the dark theme; the night sky
+   * is depicted, not read, and does not. Writing `color: var(--paper)` on a
+   * night panel is correct in the light theme and paints #0b1f2a on #052a3a —
+   * 1.34:1 — in the dark one. That is the same shape of bug as the sleeping
+   * banner's missing `--night`, from the opposite side.
+   */
+  it('proves --paper cannot stand in for --night-ink after dark', () => {
+    const DARK = '@media (prefers-color-scheme: dark)';
+    expect(contrast(token(BASE, 'paper', DARK), night)).toBeLessThan(AA);
+  });
+
+  it('does not let the dark theme redefine the sky', () => {
+    const dark = BASE.slice(BASE.indexOf('@media (prefers-color-scheme: dark)'));
+    for (const name of ['night', 'night-deep', 'night-ink', 'night-ink-soft', 'lamp']) {
+      expect(dark, `--${name} must not be overridden in the dark theme`).not.toMatch(
+        new RegExp(`--${name}:\\s*#`),
+      );
+    }
+  });
+
+  /**
+   * Timber on night, which looks like an obvious pairing — two dark browns and
+   * blues from the same pack — and measures 1.12:1. Documented here for the
+   * same reason ink-on-timber is documented below: the mistake is available,
+   * and a screenshot is not a review step that scales.
+   */
+  it('proves timber on night is as unreadable as ink on timber', () => {
+    expect(contrast(token(UI, 'timber'), night)).toBeLessThan(AA);
+  });
+});
+
+/**
+ * The lit window — a paper panel standing inside the night register (U3-3).
+ *
+ * **This is a third surface and it broke twice before it had a test.** The
+ * plot demo sits in the hero, which overrides every ink token to cream; let
+ * that cascade in and the panel is cream on transparent. Pin only the ink and
+ * the DARK THEME breaks instead, because `--paper-raised` inverts to #123040
+ * under it and the pinned #2a1018 header lands on navy at 1.4:1.
+ *
+ * So the panel pins both sides, and this block checks the pairs it pins —
+ * against the literal values, not the tokens, because the whole point is that
+ * these do not follow the tokens.
+ */
+describe('a paper panel inside the night register meets WCAG AA', () => {
+  const LANDING = readFileSync(join(HERE, 'landing.css'), 'utf8');
+  const panel = LANDING.slice(LANDING.indexOf('.hero .panel,'));
+
+  /** Reads a property from the `.hero .panel` rule specifically. */
+  const pinned = (name: string): string => {
+    const match = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`).exec(panel);
+    expect(match, `--${name} is not pinned on .hero .panel`).not.toBeNull();
+    return match![1]!.toLowerCase();
+  };
+
+  it.each([
+    ['body text on the panel', pinned('ink'), pinned('paper-raised')],
+    ['quiet text on the panel', pinned('ink-faint'), pinned('paper-raised')],
+    ['soft text on the panel', pinned('ink-soft'), pinned('paper-raised')],
+    // `.panel__head` is `--paper` on `--ink`: the header that disappeared.
+    ['the panel header', pinned('paper'), pinned('ink')],
+    ['quiet text on sunk paper', pinned('ink-faint'), pinned('paper-sunk')],
+  ])('%s', (_label, fg, bg) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(AA);
+  });
+
+  it('pins its paper as well as its ink', () => {
+    // The regression was pinning half of the pair. If a future edit drops the
+    // background tokens and goes back to inheriting them, this fails before
+    // anyone opens the page in the dark theme.
+    for (const name of ['paper', 'paper-raised', 'paper-sunk', 'ink', 'ink-soft', 'ink-faint']) {
+      expect(panel, `.hero .panel must pin --${name}`).toMatch(
+        new RegExp(`--${name}:\\s*#[0-9a-fA-F]{6}`),
+      );
+    }
+  });
+});
+
 describe('the HUD palette meets WCAG AA', () => {
   const hudPaper = token(HUD, 'paper');
   const hudInk = token(HUD, 'ink');
@@ -216,6 +342,34 @@ describe('the HUD palette meets WCAG AA on a framed panel', () => {
   });
 
   /**
+   * **An element that wears a `fill` frame has the tan as its ground, whatever
+   * its own `background` says.**
+   *
+   * `.toast--error` asked for `#fbf1e2` on `background: var(--barn)`, which is a
+   * fine pair and never reached the screen: Phase U gave `.toast` the panel
+   * frame with `border-image-slice: 6 fill`, and `fill` paints the source's
+   * middle over the element's own background. The measured result was cream text
+   * on tan at **1.25:1** — invisible — on every refusal the game gives.
+   *
+   * This checks the colour against the surface the frame actually puts behind
+   * it, not the one the rule believes it set. That distinction is the bug.
+   */
+  it('keeps framed-toast text readable on the fill the frame paints', () => {
+    const rule = HUD.match(/\.toast--error\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(rule, '.toast--error rule not found').not.toBe('');
+
+    const fg = rule.match(/color:\s*(#[0-9a-fA-F]{6})/)?.[1];
+    expect(fg, '.toast--error must set an explicit colour').toBeTruthy();
+    expect(contrast(fg!, tan)).toBeGreaterThanOrEqual(AA);
+
+    // And it must not re-introduce a background the `fill` will cover, which is
+    // what made the old pair look correct in the stylesheet.
+    expect(rule, 'a background under a fill frame is never painted').not.toMatch(
+      /background(-color)?:/,
+    );
+  });
+
+  /**
    * The same literal sweep the bar gets. A hardcoded colour that passes on
    * cream can fail on tan, and `.hud__coach` was exactly that case — three
    * off-palette literals that T-15.26's sampling pass missed because the hint
@@ -258,5 +412,197 @@ describe('the HUD palette meets WCAG AA on a framed panel', () => {
     );
 
     expect(failing, `hardcoded text colours below AA on the panel tan: ${failing}`).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The ground a `fill` frame actually paints
+ * ------------------------------------------------------------------ */
+
+/**
+ * **Every block above this one checks a colour against a surface the element
+ * may not be standing on.**
+ *
+ * `border-image-slice: <n> fill` paints the source image's middle OVER the
+ * element's own background. Phase U gave almost every control in the HUD a
+ * nine-sliced frame with `fill`, and from that moment a rule of the shape
+ *
+ *     background: var(--barn);
+ *     color: var(--paper);
+ *
+ * stopped describing anything real: the `background` is not painted, and the
+ * `color` is sitting on whatever the PNG has in its middle.
+ *
+ * The cost, measured by sampling the shipped assets rather than reading the
+ * stylesheet: **six controls whose text is invisible** (1.07 to 1.45), and the
+ * `--paper`/`--barn` pair pinned at the top of this file — which T-27.01
+ * darkened `--barn` by 4.5% to rescue — describing a background that has not
+ * been painted since Phase U. The token is doing nothing and the test was
+ * confirming it.
+ *
+ * `.toast--error` was fixed for exactly this last phase. One selector was
+ * fixed; the class was not swept. This block is the sweep.
+ *
+ * **The fills are read from the PNGs, not typed in here.** A pinned hex is
+ * another copy of a number that can drift from the art, which is the mistake
+ * the whole `ui-crops.mjs`/`measure-ui.mjs` chain exists to prevent.
+ */
+describe('text on a frame that paints its own middle', () => {
+  const ASSETS = join(HERE, '..', '..', 'public', 'assets');
+
+  /**
+   * The dominant opaque colour in the middle of a frame — what `fill` stretches
+   * across the element's interior.
+   *
+   * The middle half on both axes, so the frame's own border pixels cannot win
+   * the count on a small asset.
+   */
+  function fillColour(file: string): string {
+    const img = decodePng(readFileSync(join(ASSETS, file)));
+    const counts = new Map<string, number>();
+    for (let y = Math.floor(img.height / 4); y < Math.ceil((img.height * 3) / 4); y += 1) {
+      for (let x = Math.floor(img.width / 4); x < Math.ceil((img.width * 3) / 4); x += 1) {
+        const i = (y * img.width + x) * 4;
+        if (img.data[i + 3]! < 250) continue;
+        const hex = `#${[0, 1, 2].map((c) => img.data[i + c]!.toString(16).padStart(2, '0')).join('')}`;
+        counts.set(hex, (counts.get(hex) ?? 0) + 1);
+      }
+    }
+    const best = [...counts].sort((a, b) => b[1] - a[1])[0];
+    expect(best, `no opaque fill found in ${file}`).toBeDefined();
+    return best![0];
+  }
+
+  /** CSS comments hold example declarations; they are not rules. */
+  function stripComments(css: string): string {
+    return css.replace(/\/\*[\s\S]*?\*\//g, '');
+  }
+
+  /**
+   * The colour a selector ends up with, resolved the way the browser resolves
+   * it: `ui.css` first, `hud.css` second, last declaration wins.
+   *
+   * Reading the STYLESHEET rather than pinning the intended token is the whole
+   * point — a table of what the colours ought to be would have passed happily
+   * while all six of these were invisible on screen.
+   */
+  function declaredColour(selector: string): string | null {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let found: string | null = null;
+    for (const css of [UI, HUD]) {
+      const rules = stripComments(css).match(/[^{}]+\{[^}]*\}/g) ?? [];
+      for (const rule of rules) {
+        const [head, body] = [rule.slice(0, rule.indexOf('{')), rule.slice(rule.indexOf('{'))];
+        // The selector must appear as a whole entry in the comma-separated list.
+        if (!new RegExp(`(^|,)\\s*${escaped}\\s*(,|$)`).test(head.trim())) continue;
+        const decl = [...body.matchAll(/(?:^|[;{])\s*color:\s*([^;}]+)/g)].pop();
+        if (!decl) continue;
+        const value = decl[1]!.trim();
+        const varMatch = /^var\(\s*--([\w-]+)\s*(?:,\s*(#[0-9a-fA-F]{6}))?\s*\)$/.exec(value);
+        if (varMatch) {
+          const name = varMatch[1]!;
+          const declared = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`).exec(HUD + UI);
+          found = (declared?.[1] ?? varMatch[2] ?? '').toLowerCase() || found;
+        } else if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+          found = value.toLowerCase();
+        }
+      }
+    }
+    if (found) return found;
+    /*
+     * A state or modifier that declares no colour of its own inherits the base
+     * rule's — and that is the CORRECT shape for one, so it must not be read as
+     * "unresolvable". Four of the six invisible cases were states that declared
+     * a colour they should not have; this is what lets the fix be "delete it".
+     */
+    const base = selector.replace(/(:[a-z-]+(\([^)]*\))?|--[\w-]+)$/, '');
+    return base && base !== selector ? declaredColour(base) : null;
+  }
+
+  /**
+   * Every control whose ground is a `fill`, and the asset that paints it.
+   *
+   * Hover and disabled states are listed separately because each is a different
+   * pair — four of the six invisible cases were exactly such a state, which is
+   * why a table of resting colours would have missed them.
+   */
+  const ON_FILL: Array<[label: string, selector: string, asset: string]> = [
+    ['the idle banner', '.idle__banner', 'ui-panel.png'],
+    ['an error toast', '.toast--error', 'ui-panel.png'],
+    ['a goal tag', '.goalrow__tag', 'ui-tag-grey.png'],
+    ['the gold pill', '.hud__gold', 'ui-tag-honey.png'],
+    ['a claim button', '.goalrow__claim', 'ui-plate-moss.png'],
+    ['a shop buy button', '.shoprow__btn', 'ui-plate-moss.png'],
+    ['the idle stop button', '.idle__stop', 'ui-plate-pink.png'],
+    ['the idle stop button, hovered', '.idle__stop:hover', 'ui-plate-pink.png'],
+    ['a bar button', '.hud__btn', 'ui-plate-rust.png'],
+    ['a trade button', '.trade__btn', 'ui-plate-rust.png'],
+    ['the cancel-trade button', '.trade__btn--danger', 'ui-plate-rust.png'],
+    ['a shipping button', '.shiprow__btn', 'ui-plate-rust.png'],
+    ['a decor button', '.decorrow__btn', 'ui-plate-rust.png'],
+    ['a decor button you cannot afford', '.decorrow__btn:disabled', 'ui-plate-rust.png'],
+    ['the merchant’s name', '.dialogue__speaker', 'ui-dialogue.png'],
+    ['a panel header', '.trade__head', 'ui-rail.png'],
+  ];
+
+  it.each(ON_FILL)('%s', (_label, selector, asset) => {
+    const ink = declaredColour(selector);
+    expect(ink, `${selector} declares no resolvable colour`).not.toBeNull();
+    expect(contrast(ink!, fillColour(asset))).toBeGreaterThanOrEqual(AA);
+  });
+
+  /**
+   * The combination that is always a lie.
+   *
+   * A rule that sets BOTH a `background` and a `border-image-source` with
+   * `fill` is declaring a surface it then covers up. Every one of the six
+   * invisible cases had this shape, and reading the rule gives no hint —
+   * `background: var(--grass-deep); color: var(--paper)` looks like a perfectly
+   * good green button, and is a rust one.
+   */
+  it('declares no background underneath a fill frame', () => {
+    const offenders: string[] = [];
+    for (const css of [HUD, UI]) {
+      for (const rule of stripComments(css).match(/[^{}]+\{[^}]*\}/g) ?? []) {
+        if (!/border-image-slice:[^;]*\bfill\b/.test(rule)) continue;
+        // Capture the value rather than guarding it with a lookahead: `\s*`
+        // backtracks to zero width, so `(?!none)` happily matches " none".
+        const bg = /^\s*background(?:-color)?:\s*([^;}]+)/m.exec(rule)?.[1]?.trim();
+        if (!bg || bg === 'none' || bg === 'transparent') continue;
+        offenders.push(rule.split('{')[0]!.trim().replace(/\s+/g, ' ').slice(0, 70));
+      }
+    }
+    expect(
+      offenders,
+      `these declare a background a fill frame paints over: ${offenders.join(' | ')}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * `opacity` is not a colour, and using it as one hides the result from every
+   * check in this file.
+   *
+   * Four rules dimmed their text this way. `.board__tab`'s comment even
+   * explained the choice: *"Half-strength rather than a lighter colour, so the
+   * contrast ratio the `contrast.test.ts` axe pass pins is not quietly
+   * reduced."* It is precisely backwards — the ratio IS reduced, and the
+   * reduction is what this file cannot see. The four produced four different
+   * untokenised browns (#493233, #604641, #654a44, #ac8f86), none of which is
+   * in the palette.
+   *
+   * Opacity on a whole control (a disabled row, a dragging slot) is fine and is
+   * why this looks for rules that also set type.
+   */
+  it('never dims text with opacity instead of choosing a colour', () => {
+    const offenders: string[] = [];
+    for (const rule of stripComments(HUD).match(/[^{}]+\{[^}]*\}/g) ?? []) {
+      if (!/^\s*opacity:\s*0?\.\d+/m.test(rule)) continue;
+      if (!/font-(family|size|weight)|text-transform/.test(rule)) continue;
+      offenders.push(rule.split('{')[0]!.trim().replace(/\s+/g, ' ').slice(0, 70));
+    }
+    expect(
+      offenders,
+      `these dim text with opacity rather than a token: ${offenders.join(' | ')}`,
+    ).toEqual([]);
   });
 });

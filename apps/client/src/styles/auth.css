@@ -1,12 +1,46 @@
 /*
- * Login and registration. Same paper, same ink, same hard shadows as the
- * landing page — signing up should not feel like leaving the game.
+ * Login and registration (reskinned in U3-4).
+ *
+ * The page is the landing page's night register and the card is a **lit
+ * window** standing in it — the same relationship the hero's plot panel has to
+ * the hero, and the same one the farmhouse has to the field at dusk. Signing up
+ * should not feel like leaving the game, and until this phase it felt like
+ * leaving for a form.
+ *
+ * **The card's interior stays paper.** Inputs are for reading and typing, and
+ * that is the one place in this design where legibility outranks atmosphere.
  */
 
 .auth {
   min-height: 100svh;
   display: grid;
   grid-template-rows: auto 1fr auto;
+  background: linear-gradient(var(--night), var(--night-deep) 60%, var(--night));
+}
+
+/* The chrome above and below is outside, like the landing page's. */
+.auth > .masthead,
+.auth > .sitefoot {
+  --ink: var(--night-ink);
+  --ink-soft: var(--night-ink-soft);
+  --ink-faint: var(--night-ink-soft);
+  --line: #0d3c50;
+
+  color: var(--night-ink);
+  background: transparent;
+  border-color: #0d3c50;
+}
+
+.auth > .masthead .btn {
+  box-shadow: none;
+  border-color: var(--lamp);
+  background: var(--lamp);
+  color: #2a1018;
+}
+
+.auth > .masthead .btn:hover {
+  transform: none;
+  background: #ffd968;
 }
 
 .auth__main {
@@ -16,23 +50,86 @@
   padding: clamp(2rem, 7vw, 4rem) var(--gutter);
 }
 
+/*
+ * The pack's timber ring, from `ui.css`'s `.ui-rail` — `border-image` WITHOUT
+ * `fill`, so the frame is a hollow ring and the card's own paper shows through
+ * it. That is the same rule every window in the game uses (`ui.css`'s APPLIED
+ * section), which is the entire point of `.ui-scope` existing.
+ *
+ * The letterpress shadow goes: it is the paper idiom, and against night it is
+ * a black rectangle behind a dark frame.
+ */
 .auth__card {
   width: 100%;
   max-width: 440px;
+  /* `border` is not reset here: `ui.css` sets `border-width`/`border-image` on
+     this selector and loads later, so a reset would be a dead declaration. */
+  box-shadow: none;
+  background: transparent;
+
+  --paper: #f2e3ce;
+  --paper-sunk: #e6d2b5;
+  --paper-raised: #fbf1e2;
+  --ink: #2a1018;
+  --ink-soft: #6d4738;
+  --ink-faint: #6f5847;
+  --line: #2a1018;
 }
 
+/*
+ * A small window onto the same farm, at the same hour the landing page's band
+ * is showing — `auth-form.ts` drives both from `heroSkyAt`. It replaces a flat
+ * `background: var(--soil)` band.
+ */
 .auth__scene {
+  position: relative;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 0.5rem;
-  padding: 1.25rem 1rem 0.9rem;
-  background: var(--soil);
-  border-bottom: var(--rule) solid var(--line);
+  gap: 0.75rem;
+  min-height: 96px;
+  padding: 1.25rem 1rem 0;
+  background: #79bf56;
+  overflow: hidden;
+}
+
+.auth__tint {
+  position: absolute;
+  inset: 0;
+  background: var(--night);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Above the tint: a lamp that dims as night falls is a lamp that is not on. */
+.auth__lamp {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+
+.auth__lamp-lit {
+  position: absolute;
+  inset: 0;
+  opacity: var(--glow, 0);
+}
+
+/* Layer strips stacked in register — see `idleFarmer` in `auth-form.ts`. */
+.farmer {
+  position: relative;
+  flex: none;
+  z-index: 1;
+}
+
+.farmer__layer {
+  position: absolute;
+  inset: 0;
 }
 
 .auth__body {
   padding: 1.5rem;
+  background: var(--paper-raised);
+  color: var(--ink);
 }
 
 .auth__title {
@@ -58,9 +155,8 @@
 
 .field > label {
   font-family: var(--font-display);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
   color: var(--ink-soft);
 }
@@ -96,13 +192,19 @@
   color: var(--ink-faint);
 }
 
-/* Validation messages sit under the field and are announced to screen readers. */
+/*
+ * Validation messages sit under the field and are announced to screen readers.
+ *
+ * **The body face, not the label face.** A label is one to three words and
+ * Silkscreen is right for it; an error is a sentence telling someone how to fix
+ * something, and "USERNAME MUST BE AT LEAST 3 CHARACTERS." set in uppercase
+ * pixel type is shouting instructions at a person who has already made a
+ * mistake. U3-2 swapped this rule along with the labels and it was wrong to.
+ */
 .field__error {
-  font-family: var(--font-display);
-  font-size: 0.66rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--barn-bright);
 }
 

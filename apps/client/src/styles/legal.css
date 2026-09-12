@@ -32,9 +32,8 @@
   margin-bottom: 0.35rem;
   color: var(--barn-bright);
   font-family: var(--font-display);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
 }
 
@@ -54,7 +53,7 @@
 .legal code {
   padding: 0.1em 0.35em;
   background: var(--paper-sunk);
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   font-size: 0.85em;
 }
 
@@ -63,8 +62,7 @@
   padding-top: 1.5rem;
   border-top: 2px dashed var(--ink-faint);
   font-family: var(--font-display);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 12px;
+  font-weight: 400;
   text-transform: uppercase;
 }

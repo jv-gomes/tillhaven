@@ -29,23 +29,32 @@
   /* Mid-brown, from the book's border and the farmhouse's dark timber. */
   --frame: #4a2123;
   /*
-   * Quiet text on the HUD's paper (T-27.01).
+   * Quiet text. **One token, and this is the second time it has been one.**
    *
-   * There were **three** of these doing one job, and two of them failed WCAG AA
-   * on `--paper`: the token `--muted` (#ab6659, sampled from the book's shadow
-   * tone) at 3.33:1, and a literal #9a7a63 copy-pasted into three rules at
-   * 2.98:1 — the old site `--ink-faint`, hardcoded, so darkening the token in
-   * `base.css` did not touch it. axe caught only one of the three, because the
-   * other two were not on screen during the audit.
+   * T-27.01 created `--faint` because there were THREE values doing this job:
+   * `--muted` (#ab6659) at 3.33:1, a literal #9a7a63 in three rules at 2.98:1,
+   * and the token that replaced them. It then wrote, four lines further down:
    *
-   * `--faint` replaces both. #8d5449 keeps the book's shadow hue and reaches
-   * 4.55 on `--paper`, 5.15 on `--paper-raised`. One token, one number, checked
-   * by `styles/contrast.test.ts`.
+   *   > The other literal in this file, #6d4738, is left alone: it measures
+   *   > 6.10 and was never the problem.
    *
-   * The other literal in this file, #6d4738, is left alone: it measures 6.10
-   * and was never the problem.
+   * That decision is why there were **six** by this phase. #6d4738 was not a
+   * problem on its own and it was a second answer to a settled question, so
+   * every rule written afterwards picked one of the two at random — and the
+   * literal won, fourteen uses to five. Three more appeared as `opacity`
+   * dimmings (#493233, #604641, #654a44), which are not colours at all and
+   * which nothing in `contrast.test.ts` could see.
+   *
+   * **The token is #6d4738 now**, because the literal was also the better
+   * value: 5.74 on the panel tan and 6.10 on paper, against #875146's 4.55 and
+   * 4.83. The old token was scraping AA on the surface that carries most of the
+   * HUD's text. Consolidating onto the weaker number to preserve a token name
+   * would have been the wrong way round.
+   *
+   * Pinned on all three grounds by `styles/contrast.test.ts`, and an `opacity`
+   * on anything that also sets type now fails a test there.
    */
-  --faint: #875146;
+  --faint: #6d4738;
   --soil: #c46120;
   --grass-deep: #306b44;
   /*
@@ -179,7 +188,14 @@
      32px wider than it claims — which is how it reached 310px on a 390px
      screen while asking for 272. */
   box-sizing: border-box;
-  width: min(17rem, calc(100vw - 5rem));
+  /*
+   * 21rem, up from 17. The cluster carries two real tracks now — 126px each,
+   * three whole multiples of the bar art's 42-pixel window — plus a glyph
+   * column and a number column, and 17rem pushed "Lv 1" and "40/40" past the
+   * right edge of the frame. The old 17rem was sized for a 96px bar with no
+   * glyph and no XP number.
+   */
+  width: min(21rem, calc(100vw - 5rem));
 }
 
 /*
@@ -206,19 +222,40 @@
   }
 }
 
+/*
+ * Three columns: glyph, track, number.
+ *
+ * The two meters are `display: contents`, so their children are laid out by
+ * THIS grid rather than by each meter's own flex box. That is what makes the
+ * level track and the energy track share a left and a right edge — they were
+ * 69px apart before, in a 272px cluster whose other rows all started on the
+ * same line.
+ *
+ * The name and the gold plaque span all three, because they are single facts
+ * rather than rows of a table.
+ */
 .hud__readouts {
   display: grid;
-  gap: 0.28rem;
-  /* `min-width: 0` alone is not enough — the grid needs a column that is
-     allowed to shrink, or the gold pill's tabular digits set a floor. */
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 0.3rem 0.45rem;
   flex: 1;
   min-width: 0;
 }
 
+.hud__name,
+.hud__gold {
+  grid-column: 1 / -1;
+}
+
 .hud__name {
   font-family: var(--pixel-label);
-  font-size: var(--t-label-sm);
+  /*
+   * `--t-label`, not `--t-label-sm`. 10px Silkscreen was the smallest type in
+   * the game and it was being spent on the player's own farm name — the one
+   * string in the cluster that is theirs. The scale keeps 10px for pure chrome.
+   */
+  font-size: var(--t-label);
   color: var(--paper);
   /* A long farm name must not widen the cluster past its max. */
   overflow: hidden;
@@ -234,7 +271,13 @@
   gap: 0.45rem;
   padding: 0.2rem 0.6rem;
   font-family: var(--pixel-label);
-  font-size: var(--t-label);
+  /*
+   * `--t-num`, the size the scale declares for "the numbers a player reads at a
+   * glance", and gold is the first of them. The token existed and nothing in
+   * the game used it: the whole HUD was `--t-label` and `--t-label-sm`, so
+   * every number was chrome-sized and the cluster read as one flat block.
+   */
+  font-size: var(--t-num);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -302,38 +345,44 @@
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * The meters: farm level (T-30.02) and energy (MVP re-scope)
+ *
+ * One rule set for both, because they are one component used twice. They used
+ * to be two — `.hud__xp` + `.hud__level` + `.hud__xpbar` + `.hud__xpfill`
+ * against `.hud__energy` + `.hud__energybar` + `.hud__energyfill` +
+ * `.hud__energynum` — eight rules describing the same widget, which is how they
+ * drifted into different widths, different lanes and a shared colour.
+ * ------------------------------------------------------------------ */
+
 /*
- * Farm level and progress (T-30.02).
+ * Three columns: glyph, track, number. Declared on the ROW but sized by the
+ * grid on `.hud__readouts` via `display: contents`, so both meters share one
+ * set of column widths and their tracks have the same left and right edge.
  *
- * Deliberately quieter than the gold block beside it. Gold is the number a
- * player acts on constantly — buying seeds, checking a price — while level is
- * something they glance at. Giving both the same weight would make the bar
- * read as two competing scores; the level pip borrows gold's soil chip so they
- * are visibly the same family, and the bar itself is small.
+ * **That shared edge is the entire point.** Measured before: the XP track ran
+ * x1318-1420 and the energy track x1249-1352, in a cluster whose other three
+ * rows all started at x1249. Two bars that are meant to be compared, with
+ * nothing to compare them against, and a 69px step in the middle of a 272px
+ * readout.
  */
-/*
- * `flex: none`, and this is the whole reason the first attempt was wrong.
- *
- * The chip was written shrinkable, on the theory that giving up track was
- * cheaper than pushing a button off the bar. Measured at 1440x900 it produced a
- * **34px track** — the bar had room and was crushed anyway, because `.hud__bar`
- * is `flex-wrap: wrap` and a shrinkable item is squeezed BEFORE the row wraps.
- * A 34px progress bar is not a progress bar; it is a dash.
- *
- * Refusing to shrink makes it wrap to the next line instead, which is what
- * every other chip in this bar already does and what the wrap was for.
- */
-.hud__xp {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
+.hud__meter {
+  display: contents;
 }
 
-.hud__level {
-  flex: none;
-  padding: 0.3rem 0.55rem;
-  color: var(--ink);
+.hud__meter-glyph {
+  /* The rail's icons are 32px; these sit in a row of text and take the 16px
+     grid at 1x plus a whole-number upscale, per the asset rules. */
+  --ui-icon-scale: 1.5;
+
+  align-self: center;
+}
+
+.hud__meter-num {
+  align-self: center;
+  justify-self: end;
+  /* On the dark cluster, not on paper (Phase U2): ink here measured 1.4:1. */
+  color: var(--paper);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 700;
@@ -341,31 +390,132 @@
   white-space: nowrap;
 }
 
-.hud__xpbar {
-  /* A real width, not a basis — see the note on `.hud__xp`. The narrow-viewport
-     rule below trims it deliberately rather than letting flex do it by
-     accident. */
-  flex: none;
-  width: 96px;
-  height: 12px;
+/*
+ * **The track is the pack's own bar, and the groove is the same bar unlit.**
+ *
+ * This replaces a hollow `--timber` rectangle for XP and a hand-written
+ * three-stop CSS gradient for energy. The gradient was a reasonable stand-in
+ * when `ui-bars.png` had not been copied; it has been copied since Phase U, and
+ * `assets.ts` said all along that the energy bar should take its look from it.
+ *
+ * **An empty bar has to look like an unlit bar, not like a hole.** At Lv 1 the
+ * XP fill is 0% wide, and what showed through was the bare dark rectangle
+ * behind it — a new player's first screen had what read as a broken or
+ * unfinished widget in the corner. `ui-bars.png` ships no empty track (it is a
+ * colour catalogue: the same full bar in green and in cyan, verified by pixel
+ * scan in U3-5), so the groove is drawn the way `play.html`'s boot curtain
+ * draws it and for the reasons its comment gives: the identical image at the
+ * identical offset with a scrim over it. Drawing a groove by hand was tried
+ * there and double-framed, because the bar art carries its own frame at rows 2
+ * and 7 of 9 and a second frame appeared wherever the two disagreed by a pixel.
+ * Reusing the art guarantees registration instead of negotiating it.
+ *
+ * **42 source pixels, and only whole multiples of it.** A column scan finds
+ * four tracks per row in the sheet; this window is x3-44. Stretching it pulls
+ * the end caps out of square and widening it past 42 reveals the next bar
+ * along. 42x3 = 126 and 9x3 = 27, at `--ui-scale: 3` like the rest of the HUD.
+ */
+.hud__track {
+  --track-scale: 3;
+  /* Night blue at 82%, the same scrim the boot curtain dims its groove with. */
+  --groove-scrim: rgb(5 42 58 / 82%);
+
+  position: relative;
+  width: calc(42px * var(--track-scale));
+  height: calc(9px * var(--track-scale));
+  background-image: url('/assets/ui-bars.png');
+  background-size: calc(192px * var(--track-scale)) calc(160px * var(--track-scale));
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
   overflow: hidden;
 }
 
-.hud__xpfill {
+/*
+ * The scrim that makes the unlit part unlit, with the fill stacked above it.
+ *
+ * A `filter` on the parent was tried in the boot curtain and cannot work:
+ * `saturate()` discards the colour, `filter` inherits to children, and no
+ * counter-filter on the fill can put back information that is gone.
+ */
+.hud__track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--groove-scrim);
+}
+
+.hud__track-fill {
+  position: relative;
+  z-index: 2;
   display: block;
   height: 100%;
+  /*
+   * Empty until JS says otherwise. A block element with no width fills its
+   * parent, so omitting this paints both bars FULL for the frame between the
+   * HUD mounting and the first poll landing — a farm that has not loaded yet
+   * claiming full energy and a finished level.
+   */
   width: 0;
-  background: var(--grass-deep);
+  background-image: url('/assets/ui-bars.png');
+  background-size: calc(192px * var(--track-scale)) calc(160px * var(--track-scale));
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
   /*
    * The one animation here, and it is the bar catching up rather than a
    * flourish: `setExperience` moves it on the harvest response and the poll
    * reconciles it later, so an instant jump would happen twice for one event.
+   *
+   * `steps(8)` rather than a smooth ease, because the bar is pixel art and a
+   * sub-pixel width is the one thing `image-rendering: pixelated` cannot save.
    */
-  transition: width 220ms ease-out;
+  transition: width 220ms steps(8);
+}
+
+/*
+ * Green for level, cyan for energy — the pack's own two bars, at the offsets a
+ * pixel scan put them at: the green band at y101 and the cyan at y116, both
+ * three source pixels in from the left edge of the sheet.
+ *
+ * Energy takes cyan because green is the level bar's, and two green bars in one
+ * cluster is one bar the player has to read twice to tell apart. The glyphs
+ * carry that distinction now as well, so the colour is confirmation rather than
+ * the only signal.
+ */
+.hud__track,
+.hud__track-fill--xp {
+  background-position: calc(-3px * var(--track-scale)) calc(-101px * var(--track-scale));
+}
+
+.hud__track-fill--energy {
+  background-position: calc(-3px * var(--track-scale)) calc(-116px * var(--track-scale));
+}
+
+/* The energy row's groove, so an empty bar is not lit green underneath cyan. */
+.hud__meter[data-energy] .hud__track {
+  background-position: calc(-3px * var(--track-scale)) calc(-116px * var(--track-scale));
+}
+
+/*
+ * **Empty is red, and it is the only state change in either meter.** Out of
+ * energy is the one condition that stops every action in the game, and a player
+ * whose next keypress will be refused should be able to see that without
+ * reading a number.
+ *
+ * It tints the GROOVE now rather than the fill. It used to recolour
+ * `.hud__energyfill`, which at zero energy is zero pixels wide — the state that
+ * most needed to be visible was the one state in which nothing was drawn.
+ */
+.hud__meter[data-energy][data-empty] .hud__track {
+  --groove-scrim: rgb(159 67 33 / 78%);
+}
+
+.hud__meter[data-energy][data-empty] .hud__meter-num {
+  color: #f6464e;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hud__xpfill {
+  .hud__track-fill {
     transition: none;
   }
 }
@@ -378,7 +528,12 @@
    * Padding accounts for the 15px border-image frame, so the label sits inside
    * the plate's raised face rather than on its bevel.
    */
-  color: var(--paper);
+    /*
+   * The plate's cream (see `.ui-plate` in `ui.css`): the ground is
+   * `ui-plate-rust.png`'s own #ae4924, not any `background` declared here, and
+   * `--paper` on it is 4.21 while `--paper-raised` is 4.76.
+   */
+  color: var(--paper-raised);
   /* Hard-edged, whole-pixel bevel — no blur, so it reads as drawn, not lit. */
   cursor: pointer;
 }
@@ -439,88 +594,20 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   text-transform: uppercase;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------ *
- * Energy and the clock (MVP re-scope)
+ * The clock (MVP re-scope)
  * ------------------------------------------------------------------ */
 
 /*
- * Every colour here is sampled from `UI/Bars.png`'s cyan bar — the fill, its
- * top highlight and its shadow, in the pack's own values. The green bar on the
- * sheet directly above it is what the XP bar already looks like, which is
- * exactly why energy takes the cyan one: two green bars side by side in the
- * same strip is one bar the player has to read twice to tell apart.
+ * The energy fill's colours used to be declared here as `--energy`,
+ * `--energy-lit` and `--energy-shade`, sampled from `UI/Bars.png`'s cyan bar
+ * and rebuilt as a three-stop CSS gradient. The bar wears the sampled art
+ * itself now (see `.hud__track`), so the three tokens describing it have no
+ * consumer and are gone rather than left to look authoritative.
  */
-:root {
-  --energy: #2eafc7;
-  --energy-lit: #a7fce6;
-  --energy-shade: #286ed0;
-}
-
-.hud__energy {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-width: 0;
-}
-
-.hud__energybar {
-  /* Fills the row (Phase U2), same as the XP bar above it. */
-  flex: 1;
-  min-width: 0;
-  height: 12px;
-  overflow: hidden;
-}
-
-.hud__energyfill {
-  display: block;
-  height: 100%;
-  width: 100%;
-  /*
-   * Three stops, lit along the top and shaded along the bottom — but the colours
-   * are the pack's now (Phase U). `--energy` is #2eafc7, sampled off the cyan
-   * track in `Bars.png`, which is the art `assets.ts` said the energy bar should
-   * take its look from and which nothing had copied until this phase.
-   */
-  background: linear-gradient(
-    to bottom,
-    var(--energy-lit) 0 2px,
-    var(--energy) 2px 8px,
-    var(--energy-shade) 8px 100%
-  );
-  transition: width 220ms ease-out;
-}
-
-/* Spending is instant and the bar is the feedback; the XP bar's catch-up
-   animation is for a value that arrives twice, which this one does not. */
-@media (prefers-reduced-motion: reduce) {
-  .hud__energyfill {
-    transition: none;
-  }
-}
-
-/*
- * **Empty is red, and it is the only state change in the bar.** Out of energy
- * is the one condition that stops every action in the game, and a player whose
- * next keypress will be refused should be able to see that without reading a
- * number.
- */
-.hud__energy[data-empty] .hud__energyfill {
-  background: var(--barn);
-}
-
-.hud__energynum {
-  flex: none;
-  /* On the dark cluster, not on paper (Phase U2): ink here measured 1.4:1. */
-  color: var(--paper);
-  font-family: var(--pixel-label);
-  font-size: var(--t-label);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 
 /*
  * The clock: the pack's 32x32 face with its eight-position hand laid over it.
@@ -575,7 +662,7 @@
  */
 .hud__sleep {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -606,8 +693,14 @@
 .hud__toasts {
   position: absolute;
   left: 50%;
-  /* Clear of the hotbar, which owns the bottom centre (T-8.07). */
-  bottom: 6rem;
+  /*
+   * Clear of the hotbar, which owns the bottom centre (T-8.07), AND of the coach
+   * hint one gap above it. `6rem` was a guess that cleared the hotbar; deriving
+   * it from `--hotbar-clear` alone was a better guess that still landed 6px into
+   * the hint, because the hint's height is not a constant — it wraps to three
+   * lines at 390px. `--bottom-chrome` is the measured reach of both.
+   */
+  bottom: calc(var(--bottom-chrome) + var(--panel-top));
   transform: translateX(-50%);
   display: grid;
   gap: 0.5rem;
@@ -624,9 +717,27 @@
   transition: opacity 250ms ease, transform 250ms ease;
 }
 
+/*
+ * **Every error toast in the game was unreadable, and a `fill` is why.**
+ *
+ * This rule asked for cream text on `--barn`, which was a sound pair — until
+ * Phase U gave `.toast` the pack's panel frame with `border-image-slice: 6
+ * fill`. `fill` paints the source's middle over the element's own background,
+ * so `background: var(--barn)` stopped reaching the screen and `#fbf1e2` was
+ * left sitting on the panel's tan interior at **1.25:1**. Not "low contrast":
+ * invisible. It has been that way for every refusal the game gives — not enough
+ * gold, inventory full, plot not cleared — because the text did not change, the
+ * surface under it did, and nothing was looking at the surface.
+ *
+ * Same failure mode `.hud__thirsty` carries a note about, and the same one
+ * T-27.01 found three times. The background is dropped rather than fought: the
+ * plate is the toast's look now, and the message carries its severity in the
+ * ink. #a1412d is `.shoprow__reason`'s red, chosen for exactly this surface and
+ * measured at 4.53:1 on it.
+ */
 .toast--error {
-  background: var(--barn);
-  color: #fbf1e2;
+  color: #a1412d;
+  font-weight: 700;
 }
 
 .toast.is-leaving {
@@ -644,22 +755,107 @@
  * Narrow screens: the side panels become bottom strips.
  * ------------------------------------------------------------------ */
 
-@media (max-width: 700px) {
-  .hud__toasts {
-    bottom: 36vh;
-  }
 
-  /*
-   * The top bar wraps to four rows on a 390px phone and swallows anything at
-   * `top: 72px` — measured, not guessed: the banner rendered on top of the Bag
-   * and Goals buttons with its own Get-up button overlapping theirs. So on
-   * narrow screens it moves to the empty middle of the field instead, clear of
-   * the wrapped bar above and of the toasts and hotbar below.
-   */
-  .hud__sleep {
-    top: auto;
-    bottom: 46vh;
-  }
+
+/* ------------------------------------------------------------------ *
+ * The panel header contract
+ *
+ * **Six headers were reaching their right edge four different ways**, and only
+ * two of them by saying so. `.pack__close` and `.shipping__close` carried their
+ * own `margin-left: auto`; `.shop__close` was pushed by a SIBLING's auto margin,
+ * `.idle__close` by `flex: 1` on the title, `.board__close` by `flex: 1` on the
+ * tabs. Four of six were right-aligned by the accident of being the last flex
+ * child, which holds exactly until the row runs out of width.
+ *
+ * It ran out. Measured, opening one panel at a time:
+ *
+ *   1440x900   `.shop__close` spilled 25px past the panel's right edge
+ *   390x844    `.shop__close` rendered at x 541-593 — in a 390px viewport
+ *   390x844    `.board__close` covered BOTH board tabs, 44x25 over "Requests"
+ *
+ * The shop's header wants 541px of content (title 42 + tabs 423 + close 52 +
+ * gaps) and has 528 at 1440 and 334 at 390. A flex item's default
+ * `min-width: auto` refuses to shrink below its content, so the tab strip would
+ * not give way and the last child was pushed out instead.
+ *
+ * **On a phone that is a trap, not a blemish.** Escape closes every panel, and
+ * a touch device has no Escape (D-24 gave it a stick and an action button, not
+ * a keyboard). A player who opened the shop on a phone could not close it, and
+ * could not reach Gear or Decor either.
+ *
+ * Same failure as BUG-05 — "at 390px its 842px of content pushed six controls,
+ * including the only way to log out, off the screen" — which was fixed for the
+ * top bar and never swept into the panels.
+ *
+ * The contract is three lines and it is not negotiable per panel:
+ *
+ *   - the header is a flex row;
+ *   - the EXIT is `flex: none` and anchors itself, so it can be neither shrunk
+ *     nor pushed;
+ *   - the flexible middle declares `min-width: 0`, so it is what gives way.
+ * ------------------------------------------------------------------ */
+
+.shop__head,
+.pack__head,
+.trade__head,
+.shipping__head,
+.board__head,
+.idle__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/*
+ * Headers that live inside a scrolling panel stay put, so the exit is always
+ * where the player left it. `.shop` and `.trade` are absent because they are
+ * flex columns whose inner list scrolls — their headers never moved. See the
+ * note on `.pack__head` for why sticky is allowed again.
+ */
+.pack__head,
+.shipping__head,
+.idle__head,
+.board__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/*
+ * The way out of a panel. One rule, six panels.
+ *
+ * They also carried three paddings (0.25/0.3/0.35rem) and three font sizes
+ * (`--t-title`/`--t-num`/`--t-body`) for one control holding one 32px glyph, so
+ * the plate art was framed differently on every panel. Padding is left to
+ * `ui.css`'s shared plate rule now rather than being overridden six ways.
+ */
+.shop__close,
+.pack__close,
+.trade__close,
+.shipping__close,
+.board__close,
+.idle__close {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--t-body);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+/*
+ * The flexible middle. `min-width: 0` is the load-bearing half — without it a
+ * flex item will not shrink below its content, which is what pushed the exit
+ * out. `wrap` is the other: at 390 the shop's five tabs take two rows and all
+ * five stay reachable, and at 1440 they still fit one row, so the desktop is
+ * unchanged.
+ */
+.shop__tabs,
+.board__tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 /* ------------------------------------------------------------------ *
@@ -671,11 +867,28 @@
 
 .shop {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
-  width: min(520px, calc(100vw - 2rem));
-  max-height: calc(100vh - 100px);
+  /*
+   * 584, up from 520, and the number is measured rather than reasoned.
+   *
+   * The header needs **540px** of content: title 42 + five tabs 400 + 22 of tab
+   * gaps + close 56 + two 9.6px header gaps. 520 gave it 520 — twenty short,
+   * and it was those twenty pixels that used to push the close button 25px
+   * outside the panel. With the header contract the tabs wrap to a second row
+   * instead, which is correct but needless on a desktop that has the room.
+   *
+   * 584 leaves the content box at 544. Two earlier guesses (560, and "541
+   * needed") were wrong because they were arithmetic on numbers read out of the
+   * stylesheet rather than measured off the rendered header.
+   *
+   * Narrow screens still wrap, deliberately — see the `max-width: 700px` block.
+   */
+  width: min(584px, calc(100vw - 2rem));
+  /* Derived from the lane it starts in and the hotbar it must clear, rather
+     than the 100px that was tied to the deleted top bar's 72px. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   display: flex;
   flex-direction: column;
 }
@@ -685,11 +898,9 @@
 }
 
 .shop__head {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
   padding: 0.6rem 0.75rem;
-  /* Frame and colour: `ui.css`, the timber board. */
+  /* Frame and colour: `ui.css`, the timber board. Row layout: the header
+     contract near the top of this file. */
 }
 
 .shop__title {
@@ -697,12 +908,6 @@
   font-size: var(--t-label);
   font-weight: 800;
   text-transform: uppercase;
-}
-
-.shop__tabs {
-  margin-left: auto;
-  display: flex;
-  gap: 0.35rem;
 }
 
 .shop__tab {
@@ -725,14 +930,6 @@
   color: var(--ink);
 }
 
-.shop__close {
-  color: var(--paper);
-  font-size: var(--t-title);
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 0.25rem;
-}
-
 .shop__list {
   overflow-y: auto;
   padding: 0.5rem;
@@ -744,9 +941,10 @@
   margin: 0;
   padding: 1rem;
   text-align: center;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label);
-  color: #6d4738;
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 .shoprow {
@@ -821,18 +1019,29 @@
  *
  * `pointer-events: none` because it overlaps the play area and must never eat a
  * click meant for the world behind it.
+ *
+ * **`bottom` is derived now, and `4.6rem` was the bug.** 4.6rem is 73.6px; the
+ * hotbar occupies 92px from the bottom edge, so the hint sat ON the strip — 30px
+ * of overlap at 1440x900, 6px at 1280x720, 30px at 390x844, across the slot
+ * numbers. `.dialogue`, which is the same kind of strip in the same place, has
+ * always derived its clearance from the hotbar's own numbers instead. That
+ * derivation is `--hotbar-clear` now and both read it, so the hint cannot drift
+ * onto the hotbar again when the slot art is re-measured.
+ *
+ * The extra `--panel-top` is the gap between the two; without it the hint's
+ * bottom edge and the hotbar's top edge are the same line.
  */
 .hud__coach {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 4.6rem;
+  bottom: calc(var(--hotbar-clear) + var(--panel-top));
   margin: 0;
   padding: 0.3rem 0.7rem;
   max-width: min(46rem, 90vw);
   text-align: center;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label);
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
   line-height: 1.3;
   /*
    * The coach speaks in the same box the merchant does (Phase U) — it is the
@@ -919,7 +1128,7 @@
 .shoprow__meta {
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
-  color: #6d4738;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
@@ -973,12 +1182,12 @@
   opacity: 0.6;
 }
 
-@media (max-width: 700px) {
-  .shop {
-    top: 60px;
-    max-height: 55vh;
-  }
-}
+/*
+ * Position on a phone is the shared lane rule's job now (see the
+ * `max-width: 700px` block near the top of this file). This one restated
+ * `top: 60px` — the same stale constant as `top: 72px`, one media query down,
+ * and it put the panel through the status cluster.
+ */
 
 /* ------------------------------------------------------------------ *
  * Inventory: chest on top, backpack underneath (T-10.04a)
@@ -1004,12 +1213,14 @@
   --gilt: #ae4924;
 
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
   max-width: calc(100vw - 2rem);
-  max-height: calc(100vh - 100px);
+  /* Derived from the lane it starts in and the hotbar it must clear, rather
+     than the 100px that was tied to the deleted top bar's 72px. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -1020,11 +1231,27 @@
 }
 
 /*
- * NOT `position: sticky`. It was, and over the WebGL canvas Chromium promoted
- * it to its own layer and painted a black band across the compositing bounds —
- * a 700x32 rectangle above the hotbar, in the game, not just in screenshots.
- * The panel is short enough not to need a pinned header anyway: twelve columns
- * wide, and a deep chest scrolls its own section.
+ * **`position: sticky`, and this reverses a decision — with a re-test.**
+ *
+ * This rule used to say: *"NOT `position: sticky`. It was, and over the WebGL
+ * canvas Chromium promoted it to its own layer and painted a black band across
+ * the compositing bounds — a 700x32 rectangle above the hotbar, in the game,
+ * not just in screenshots."* That was a real observation and the panel has been
+ * static ever since.
+ *
+ * It also left the only way out of the panel attached to the scrolling content.
+ * `.pack`, `.shipping` and `.idle__panel` are all `overflow-y: auto` with a
+ * static header, so scrolling took the close button with it — measured on the
+ * idle panel at 1280x560, scrolling to the bottom moved the ✕ from `top: 199`
+ * to `top: 113`, **46px above the panel's own top edge**. The second half of
+ * the old note ("short enough not to need a pinned header anyway") is only true
+ * on a tall viewport.
+ *
+ * So the artefact was re-tested rather than worked around: sticky headers,
+ * headed Chromium, both panels scrolled to the bottom over the live canvas.
+ * **The band does not reproduce.** It was a browser bug and this Chromium does
+ * not have it. Re-check headed if it ever comes back — headless paints its own
+ * artefacts over this canvas and cannot answer the question.
  */
 .pack__head {
   display: flex;
@@ -1039,15 +1266,6 @@
   font-size: var(--t-label);
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.pack__close {
-  margin-left: auto;
-  padding: 0 0.3rem;
-  color: inherit;
-  font-size: var(--t-num);
-  line-height: 1;
-  cursor: pointer;
 }
 
 .pack__section {
@@ -1073,7 +1291,7 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   text-transform: uppercase;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .pack__count {
@@ -1116,12 +1334,26 @@
   gap: 2px;
 }
 
+/*
+ * **Prose takes the body face, not the label face (this pass).**
+ *
+ * Every sentence in the HUD was set in Silkscreen, the uppercase chrome face,
+ * at 10 or 12px with no line-height. Silkscreen is drawn on an 8px grid for
+ * short uppercase labels — "BACKPACK", "GOALS", "SOW" — and it is genuinely the
+ * right face for those. It is the wrong face for "Drag a slot onto another, or
+ * click one and then the slot to move it to", which is three lines of running
+ * text in a display face at the smallest size in the scale.
+ *
+ * The type scale already said so: `--t-body`/`--t-body-sm` are annotated
+ * "Pixelify Sans, prose and lists" and nothing in the game used them. This is
+ * the pairing the scale was built for, applied.
+ */
 .pack__hint {
   margin: 0;
   padding: 0 0.75rem 0.75rem;
   max-width: 46ch;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label-sm);
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
   line-height: 1.5;
   color: var(--faint);
 }
@@ -1181,24 +1413,21 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: #2a1018;
-  text-shadow:
-    1px 1px 0 rgba(247, 219, 198, 0.9),
-    -1px 1px 0 rgba(247, 219, 198, 0.9);
+  /*
+   * The backpack and chest grids get the same chip as the hotbar, for the same
+   * reason: #2a1018 on the cell's #c46120 is 4.28, and it was being rescued by a
+   * two-sided cream shadow rather than by its own ground.
+   */
+  padding: 1px 3px;
+  background: var(--timber);
+  color: var(--paper-raised);
 }
 
 @media (max-width: 700px) {
-  .pack {
-    top: 60px;
-    left: 0.5rem;
-    right: 0.5rem;
-    transform: none;
-    width: auto;
-    max-height: 60vh;
-  }
-
-  /* The twelve-wide grid does not fit a phone; it scrolls sideways rather than
-     rewrapping, which would put the hotbar row somewhere other than row one. */
+  /* Position is the shared lane rule's; this is the only genuinely
+     pack-specific part. The twelve-wide grid does not fit a phone, so it
+     scrolls sideways rather than rewrapping, which would put the hotbar row
+     somewhere other than row one. */
   .pack__section {
     overflow-x: auto;
   }
@@ -1232,11 +1461,13 @@
 
 .hud__decor {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   /* Clear of the icon rail (Phase U2). */
   left: var(--rail-clear);
   width: 216px;
-  max-height: calc(100vh - 100px);
+  /* Derived from the lane it starts in and the hotbar it must clear, rather
+     than the 100px that was tied to the deleted top bar's 72px. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   overflow-y: auto;
   padding: 0.75rem;
   /* 6px to match `.shop` and `.pack`; it was 4px, from before T-15.26. */
@@ -1279,7 +1510,12 @@
   margin-left: auto;
   flex: 0 0 auto;
   padding: 0.2rem 0.45rem;
-  color: var(--paper);
+    /*
+   * The plate's cream (see `.ui-plate` in `ui.css`): the ground is
+   * `ui-plate-rust.png`'s own #ae4924, not any `background` declared here, and
+   * `--paper` on it is 4.21 while `--paper-raised` is 4.76.
+   */
+  color: var(--paper-raised);
   /* The same whole-pixel bevel every other button plate uses (T-15.26). */
   font: inherit;
   font-size: var(--t-label-sm);
@@ -1301,8 +1537,14 @@
  * that the price is the problem.
  */
 .decorrow__btn:disabled {
-  background: var(--paper-raised);
-  color: var(--faint);
+  /*
+   * A price you cannot afford, at **1.15:1**. The rule set a pale background and
+   * a quiet brown on it — a sensible pair that never reached the screen, because
+   * the rust plate is painted over the background. The plate's own cream at a
+   * lighter weight is a dimming this ground can actually carry.
+   */
+  color: var(--paper-raised);
+  font-weight: 400;
   box-shadow: none;
   text-shadow: none;
   cursor: default;
@@ -1341,11 +1583,13 @@
 
 .trade {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
   width: min(620px, calc(100vw - 2rem));
-  max-height: calc(100vh - 100px);
+  /* Derived from the lane it starts in and the hotbar it must clear, rather
+     than the 100px that was tied to the deleted top bar's 72px. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   display: flex;
   flex-direction: column;
 }
@@ -1359,8 +1603,8 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.75rem;
-  border-bottom: 3px solid var(--ink);
-  background: var(--ink);
+  /* No `background: var(--ink)`: `ui.css` paints `ui-rail.png` over it with
+     `fill`, so it was never on screen. Row layout: the header contract. */
   color: var(--paper);
 }
 
@@ -1371,20 +1615,41 @@
   text-transform: uppercase;
 }
 
+/*
+ * **No `margin-left: auto` here, and that was the bug.**
+ *
+ * This and `.trade__history-toggle` are siblings in `.trade__head` and BOTH
+ * declared it — the only place in this file where two auto margins shared a
+ * flex line. Flexbox splits the free space equally between them, so the
+ * countdown was parked at an arbitrary midpoint with ~170px of gap on each
+ * side, and it MOVED as the string got shorter: measured x 651-694 for
+ * "4m 59s", 661-684 for "59s", and a collapsed 672-672 hole when the trade had
+ * no expiry at all.
+ *
+ * The countdown belongs beside the title it describes. The free space collects
+ * in one place now, ahead of History and the close button.
+ */
 .trade__expiry {
-  margin-left: auto;
+  /*
+   * `flex: 1` is what collects the free space, instead of a second auto margin.
+   *
+   * The first attempt simply deleted this element's `margin-left: auto` — which
+   * fixed the drift and then reproduced the same bug one element along, because
+   * the header contract gives every close button its own auto margin and
+   * `.trade__history-toggle` still had one too. Two again, splitting again.
+   *
+   * Growing the countdown's BOX rather than pushing it leaves its text beside
+   * the title where it belongs, sends History and the close right together, and
+   * leaves exactly one auto margin on the line.
+   */
+  flex: 1;
+  min-width: 0;
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
   font-variant-numeric: tabular-nums;
-  color: var(--soil);
-}
-
-.trade__close {
-  color: var(--paper);
-  font-size: var(--t-title);
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 0.25rem;
+  /* `--soil` measured 4.07 on the header's timber fill. `--paper-raised` is the
+     cream the rest of this plank already uses. */
+  color: var(--paper-raised);
 }
 
 .trade__alert {
@@ -1417,9 +1682,10 @@
 
 .trade__hint {
   margin: 0;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label);
-  color: #6d4738;
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 /*
@@ -1460,7 +1726,12 @@
 
 .trade__btn {
   padding: 0.4rem 0.9rem;
-  color: var(--ink);
+    /*
+   * The plate's cream (see `.ui-plate` in `ui.css`): the ground is
+   * `ui-plate-rust.png`'s own #ae4924, not any `background` declared here, and
+   * `--paper` on it is 4.21 while `--paper-raised` is 4.76.
+   */
+  color: var(--paper-raised);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 700;
@@ -1487,8 +1758,14 @@
 }
 
 .trade__btn--danger {
-  background: transparent;
-  color: var(--barn);
+  /*
+   * Cancelling a trade is the destructive action, and it was marked by colouring
+   * the label `--barn` over `background: transparent` — but the rust plate is
+   * painted over that transparent background, so it was rust on rust at
+   * **1.15:1**. The plate eats any red put on it, which is precisely why danger
+   * cannot be signalled with colour here. Weight and wording carry it instead.
+   */
+  font-weight: 800;
 }
 
 .trade__btn--danger:hover:not(:disabled) {
@@ -1527,7 +1804,7 @@
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
   font-weight: 700;
-  color: #6d4738;
+  color: var(--faint);
   text-transform: none;
   letter-spacing: 0;
 }
@@ -1544,9 +1821,10 @@
 
 .trade__empty {
   margin: 0;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label-sm);
-  color: #6d4738;
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 .trade__add {
@@ -1617,19 +1895,15 @@
   flex: none;
 }
 
-@media (max-width: 700px) {
-  .trade {
-    top: 60px;
-    max-height: 55vh;
-  }
-}
+/* Phone position: the shared lane rule. See `.shop`'s note. */
 
 /* ------------------------------------------------------------------ *
  * Trade history (T-4.12)
  * ------------------------------------------------------------------ */
 
 .trade__history-toggle {
-  margin-left: auto;
+  /* No auto margin: `.trade__expiry` owns the free space. One per flex line. */
+  flex: none;
   padding: 0.25rem 0.6rem;
   border: 2px solid var(--paper);
   background: transparent;
@@ -1671,7 +1945,7 @@
   flex-wrap: wrap;
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .historyrow__arrow {
@@ -1717,6 +1991,12 @@
  * next time `fitCamera` ran. `visibility: hidden` keeps every layout box
  * exactly where it was and only stops it painting.
  *
+ * **`.hud__coach` joined the list in U3-6.** The onboarding hint sits at the
+ * bottom of the screen in the merchant's dialogue box, which put "Walk with
+ * WASD, face a plot and press E" across the creator's last swatch row — advice
+ * about a farm the player cannot reach yet, covering the clothes they are
+ * choosing. Same bug as BUG-15, one element later.
+ *
  * Why hide them at all: the creator is a MANDATORY modal with no close button,
  * so nothing in the bar applies to a player who is in it — and the overlay's
  * 82%-opaque scrim was covering the bar anyway, leaving the gold counter and
@@ -1726,6 +2006,7 @@
  */
 .hud--creating .hud__rail,
 .hud--creating .hud__status,
+.hud--creating .hud__coach,
 .hud--creating .hotbar {
   visibility: hidden;
 }
@@ -1737,17 +2018,26 @@
   width: min(820px, 100%);
 }
 
+/*
+ * The header is the pack's plank now — it joins the shared rule in `ui.css`
+ * rather than declaring its own chrome, so it cannot drift from the shop's or
+ * the backpack's. What it replaces was a flat `background: var(--ink)`
+ * rectangle: the last panel in the game still wearing one, inside a card that
+ * already had timber around it.
+ *
+ * Only the padding and the text colour stay here. `--paper` on the plank is
+ * the pair `contrast.test.ts` pins at 8.9:1; ink on it measures 1.13:1 and is
+ * the trap that shipped three times in Phase U.
+ */
 .creator__head {
-  padding: 0.6rem 0.75rem;
-  border-bottom: 3px solid var(--ink);
-  background: var(--ink);
+  padding: 0.35rem 0.6rem;
   color: var(--paper);
 }
 
 .creator__title {
   font-family: var(--pixel-label);
   font-size: var(--t-label);
-  font-weight: 800;
+  font-weight: 400;
   text-transform: uppercase;
 }
 
@@ -1755,25 +2045,94 @@
   margin: 0;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid rgba(42, 16, 24, 0.25);
-  font-size: var(--t-label);
-  color: #6d4738;
+  /* Missed by the same conversion as `.idle__hint`. */
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  color: var(--faint);
 }
 
+/*
+ * Two columns: the farmer on the left, the choices on the right.
+ *
+ * A grid rather than the flex row it was, because the left column now holds two
+ * things stacked — the preview and the commit — and the right column has to
+ * span both rows. `align-items: start` keeps the preview square (see the note
+ * on `.creator__stage`: stretching it makes a wall of grass).
+ */
 .creator__body {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  align-items: start;
   gap: 0.9rem;
-  align-items: flex-start;
   padding: 0.75rem;
+}
+
+.creator__stage {
+  grid-area: 1 / 1;
+}
+
+.creator__actions {
+  grid-area: 2 / 1;
+}
+
+.creator__rows {
+  grid-area: 1 / 2 / span 2;
 }
 
 /* The preview stays put while the rows scroll past it — it is the thing being
    decided, so it should never be the thing that scrolls away. */
+/*
+ * The preview stands on grass, not in a void (U3-6).
+ *
+ * It was an untreated rectangle of panel tan with a 32px character floating in
+ * the middle of it — the largest single area of the first screen a player sees,
+ * saying nothing. `#79bf56` is the farm's own ground tile
+ * (`GRASS_FILL_FRAME`, recorded in `assets.ts` as a single flat colour), so
+ * the farmer is previewed standing where they will actually stand.
+ *
+ * `align-self: stretch` stays: the preview is the thing being decided, and it
+ * must not scroll away while the rows beside it do.
+ */
 .creator__stage {
   flex: none;
-  align-self: stretch;
+  /*
+   * `start`, not `stretch`. The preview still never scrolls away — the rows
+   * beside it own their own scroller and this sits outside it — but stretched
+   * to the card's full height the grass became a 192x560 slab of green with a
+   * 32px farmer adrift in the middle of it. A square window is a viewing
+   * window; a column of grass is a wall.
+   */
+  align-self: start;
   display: grid;
   place-items: center;
-  padding: 0.6rem;
+
+  /*
+   * **Width is pinned, and `box-sizing` with it.**
+   *
+   * The frame below adds 8px on each side, and `box-sizing` is not
+   * `border-box` on the HUD (Phase U2's trap: every panel here carries a
+   * 6-20px `border-image` and none of them declare it). Left to size from its
+   * contents the stage grew 16px, took 16px from the rows beside it, and
+   * wrapped the seventh hair swatch onto a second line — which is exactly the
+   * failure the note on `.creator__card` above predicts, and it pushed the
+   * clothes row off the bottom of the card.
+   *
+   * 192px is the preview canvas: a 32px character at `PREVIEW_SCALE` 6.
+   */
+  box-sizing: border-box;
+  width: calc(192px + 16px);
+  height: calc(192px + 16px);
+  padding: 0;
+
+  background: #79bf56;
+  border-style: solid;
+  border-width: calc(4px * var(--ui-scale-slot, 2));
+  border-image-source: url('/assets/ui-slot.png');
+  border-image-slice: 4;
+  border-image-repeat: stretch;
+  image-rendering: pixelated;
 }
 
 .creator__preview,
@@ -1807,7 +2166,7 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   text-transform: uppercase;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .creator__swatches {
@@ -1816,71 +2175,148 @@
   gap: 0.3rem;
 }
 
+/*
+ * Swatches are inventory cells now (U3-6).
+ *
+ * They were 2px CSS borders with a flat `--soil` fill for "selected" — the
+ * plainest thing left in the HUD, on the first screen a new player ever
+ * touches, inside an otherwise fully art-framed card. `.ui-slot` is the cell
+ * the backpack and the hotbar already use, so a player learns one grammar for
+ * "a thing you can pick" and meets it again ten seconds later in the hotbar.
+ *
+ * **Selection is `.ui-select`'s bracket frame, which had never been used.** It
+ * was cut and shipped in Phase U specifically because it overlays rather than
+ * replaces — brackets sit outside the cell, so the swatch keeps its own frame
+ * AND its picture underneath. A fill could not do that without tinting the very
+ * character the swatch exists to show you.
+ */
 .creator__swatch {
-  padding: 0.15rem;
-  border: 2px solid rgba(42, 16, 24, 0.35);
-  border-radius: 0;
-  background: var(--paper-raised);
+  position: relative;
+  padding: calc(1px * var(--ui-scale-slot, 2));
   cursor: pointer;
   line-height: 0;
 }
 
 .creator__swatch:hover {
-  border-color: var(--ink);
-  background: var(--soil);
+  filter: brightness(1.08);
 }
 
+/*
+ * Selected takes the LIT cell as well as the brackets.
+ *
+ * The brackets alone were too quiet here, and the reason is the context rather
+ * than the art: the hotbar shows one selected slot among twelve, while this
+ * panel shows six selected swatches among twenty-eight, each one a near-copy
+ * of its neighbours. `ui-slot-lit.png` is the same pairing `.slot.is-picked`
+ * and the hotbar already use, so the two states stay one vocabulary.
+ */
+/*
+ * **The selected swatch was the WEAKEST cell in the row, and the ring is why.**
+ *
+ * Measured at 3x: every unselected swatch carries the pack's near-black
+ * (#1c0a18) outline from `ui-slot.png`, and the selected one carried none. The
+ * bracket ring sits at `inset: calc(-2px * var(--ui-scale))`, which lands it
+ * exactly on the cell's own border and replaces it — and the brackets are drawn
+ * in a pale tan that is nearly `--panel-fill` (#ffd2a1), the creator's own
+ * background. So the one swatch the player had chosen lost its edge and faded
+ * into the panel, while the twenty-two they had not chosen kept a crisp black
+ * frame. Selection read as "disabled".
+ *
+ * This does not show in the hotbar, where the same ring works and always has:
+ * the strip is a dark timber plank, so pale brackets have something to be pale
+ * against. The art is fine; it was being used on the one background it
+ * disappears on.
+ *
+ * The fix gives the brackets the dark ground they have in the hotbar, instead
+ * of replacing them: a `box-shadow` ring in the pack's own outline black,
+ * spread to exactly the bracket frame's `-2 * --ui-scale` bleed, so the pale
+ * corners land ON it. The swatch gets its black edge back, selection reads from
+ * across the card, and the ring still never touches the character inside.
+ *
+ * `box-shadow` and not `outline`: an outline was tried at
+ * `outline-offset: calc(2px * var(--ui-scale))` and drew a line straight
+ * through the row label above it ("SKIN", "FACE", "EYES" each got a
+ * strikethrough). A shadow hugs the border box with no offset to overshoot.
+ */
 .creator__swatch.is-selected {
-  border-color: var(--ink);
-  background: var(--soil);
-  box-shadow: inset 0 0 0 2px var(--paper-raised);
+  border-image-source: url('/assets/ui-slot-lit.png');
+  box-shadow: 0 0 0 calc(2px * var(--ui-scale)) var(--ink);
 }
 
+/*
+ * **No `::after` here.** The brackets come from `.ui-select`, which
+ * `characterCreator.ts` toggles on the selected swatch — geometry lives in
+ * `ui.css` beside the crop table, where `uiSlices.test.ts` can still see it.
+ * Copying the five lines into this file would have put an unverified inset in
+ * the one place a wrong one is hardest to spot, which is exactly what
+ * `ui.css`'s own note about these two frames warns against.
+ *
+ * It is a shape change rather than a colour change, so it survives without
+ * colour vision; `aria-checked` on the radio carries it to a screen reader.
+ */
+
+/*
+ * Stacked under the preview rather than a footer rail across the card.
+ *
+ * The rule that used to close this off (`border-top`) went with the move: it
+ * separated a footer from a body, and there is no footer any more. The card's
+ * own timber ring closes the panel.
+ */
 .creator__actions {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
   gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  border-top: 3px solid var(--ink);
+  padding: 0;
 }
 
+/* Full width of the preview above them, so the two read as one block. */
+.creator__actions .creator__btn {
+  justify-content: center;
+  width: 100%;
+}
+
+/*
+ * The two actions are the pack's plates now — `sand` for "Surprise me" and
+ * `moss` for "Start farming", which is the confirm family the crop table names
+ * (`ui-crops.mjs`). `.ui-plate` brings the pressed frame on `:active` and the
+ * disabled treatment with it, so none of that is redeclared here.
+ *
+ * The letter-spacing goes with them: Silkscreen draws its own, and 0.1em on
+ * top was the same double-spacing U3-2 removed across the site.
+ */
 .creator__btn {
-  padding: 0.45rem 0.9rem;
-  color: var(--ink);
+  padding: 0.35rem 0.9rem;
   font-family: var(--pixel-label);
   font-size: var(--t-label);
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-weight: 400;
   text-transform: uppercase;
   cursor: pointer;
 }
 
-.creator__btn:hover:not(:disabled) {
-  background: var(--soil);
-}
-
 .creator__btn:disabled {
-  opacity: 0.55;
   cursor: not-allowed;
 }
 
-.creator__btn--primary {
-  background: var(--grass-deep);
-  color: var(--paper-raised);
-}
-
-.creator__btn--primary:hover:not(:disabled) {
-  background: var(--barn);
-}
-
 @media (max-width: 560px) {
+  /* One column: preview, then the choices, then the commit at the end where a
+     narrow layout expects it. */
   .creator__body {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    justify-items: stretch;
   }
 
   .creator__stage {
-    align-self: center;
+    grid-area: 1 / 1;
+    justify-self: center;
+  }
+
+  .creator__rows {
+    grid-area: 2 / 1;
+  }
+
+  .creator__actions {
+    grid-area: 3 / 1;
   }
 }
 
@@ -1915,6 +2351,20 @@
    * opaquely and is the pack's own wood.
    */
   max-width: calc(100vw - 1rem);
+  /*
+   * **`border-box`, or the plank's frame is added outside the max-width.**
+   *
+   * Measured at 390x844 the strip spanned `x -12 → 402` inside a 390px
+   * viewport: slot 1 was clipped off the left edge and slots 8-12 were
+   * unreachable off the right, with `overflow-x: auto` scrolling a box that was
+   * already wider than the screen it was being clipped against.
+   *
+   * The max-width was correct; it was being applied to the content box, so the
+   * 4px padding and the timber border-image were added on top of it. This is
+   * the same bug `.hud__status` carries a note about — it reached 310px on a
+   * 390px screen while asking for 272 — and the same one-line fix.
+   */
+  box-sizing: border-box;
   overflow-x: auto;
 }
 
@@ -1949,15 +2399,38 @@
   top: 1px;
   left: 3px;
   font-family: var(--pixel-label);
-  font-size: var(--t-label-sm);
+  /*
+   * `--t-label`, up from `--t-label-sm`.
+   *
+   * The cream-on-ink-outline treatment below is right — ink at low opacity was
+   * the first attempt and vanished against the orange cell — but at 10px
+   * Silkscreen the glyph's strokes are about as wide as the 1px outline drawn
+   * around them on four sides, so the outline closed over the letter and the
+   * numbers read as dark smudges. A shortcut hint nobody can read is not a
+   * hint, which is the note this rule already carried; it was two points short
+   * of being true.
+   */
+  font-size: var(--t-label);
   font-weight: 700;
   line-height: 1;
-  /* Same cream-on-outline treatment as the quantity. Ink at low opacity was
-     the first attempt and vanished entirely against the orange slot art —
-     a shortcut hint nobody can read is not a hint. */
+  /*
+   * **The digit sits on its own chip, because the cell cannot carry it.**
+   *
+   * `--paper-raised` on the slot art measures **3.54:1** on a filled cell and
+   * **2.38:1** on the lit/selected one — both below AA. It stayed legible on a
+   * four-way ink `text-shadow`, which is a real technique and one WCAG does not
+   * model, so the number was failing while the screen looked fine. Neither
+   * "trust the outline" nor "darken the pack's art" is available: the cell is
+   * the licensed tileset.
+   *
+   * So the digit brings its own ground — `--timber`, the plank the hotbar is
+   * already made of, so this introduces no new colour — and reaches **10.9:1**
+   * on its own. The outline goes with it: a glyph on a chip does not need one,
+   * and keeping both thickened the strokes at 10-12px.
+   */
+  padding: 1px 3px;
+  background: var(--timber);
   color: var(--paper-raised);
-  text-shadow: 1px 1px 0 var(--ink), -1px 1px 0 var(--ink), 1px -1px 0 var(--ink),
-    -1px -1px 0 var(--ink);
   pointer-events: none;
 }
 
@@ -1976,10 +2449,25 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   line-height: 1;
+  /* The same chip as `.hotbar__key` — see the note there. */
+  padding: 1px 3px;
+  background: var(--timber);
   color: var(--paper-raised);
-  text-shadow: 1px 1px 0 var(--ink), -1px 1px 0 var(--ink), 1px -1px 0 var(--ink),
-    -1px -1px 0 var(--ink);
   pointer-events: none;
+}
+
+/*
+ * An empty chip is a dark blob.
+ *
+ * The quantity span is created for every cell and emptied rather than removed
+ * (`hotbar.ts` sets `textContent = ''` for an empty slot), which cost nothing
+ * while the element had no background and paints a stub now that it has one.
+ * `:empty` rather than a JS change: the render path is already correct, it is
+ * this stylesheet that gave a blank element something to draw.
+ */
+.hotbar__qty:empty,
+.slot__qty:empty {
+  display: none;
 }
 
 @media (max-width: 720px) {
@@ -1997,11 +2485,13 @@
 
 .shipping {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
   width: min(460px, calc(100vw - 2rem));
-  max-height: calc(100vh - 100px);
+  /* Derived from the lane it starts in and the hotbar it must clear, rather
+     than the 100px that was tied to the deleted top bar's 72px. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -2026,20 +2516,11 @@
   text-transform: uppercase;
 }
 
-.shipping__close {
-  margin-left: auto;
-  padding: 0 0.3rem;
-  color: inherit;
-  font-size: var(--t-num);
-  line-height: 1;
-  cursor: pointer;
-}
-
 .shipping__hint {
   margin: 0;
   padding: 0.6rem 0.75rem 0;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label-sm);
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
   line-height: 1.5;
   color: var(--faint);
 }
@@ -2054,7 +2535,7 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   text-transform: uppercase;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .shipping__list {
@@ -2100,7 +2581,7 @@
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
   font-variant-numeric: tabular-nums;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 /* The countdown has its own column so rows do not jitter as digits change. */
@@ -2124,7 +2605,12 @@
 
 .shiprow__btn {
   padding: 0.25rem 0.5rem;
-  color: var(--ink);
+    /*
+   * The plate's cream (see `.ui-plate` in `ui.css`): the ground is
+   * `ui-plate-rust.png`'s own #ae4924, not any `background` declared here, and
+   * `--paper` on it is 4.21 while `--paper-raised` is 4.76.
+   */
+  color: var(--paper-raised);
   font: inherit;
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
@@ -2156,11 +2642,29 @@
   pointer-events: auto;
 }
 
+/*
+ * **The panel that this whole lane system was built for.**
+ *
+ * It is the only right-anchored panel in the game, and the status cluster is
+ * also anchored top-right, so `top: 72px; right: 1rem` put it straight through
+ * the cluster — 268x85px of overlap at 1440x900, and because both are
+ * `z-index: auto` siblings with `.idle` declared last in `play.html`, idle won.
+ * What it covered was precisely the level bar and the energy bar: a player who
+ * opened idle mode to decide whether to let the farmer work lost the two
+ * numbers that answer it.
+ *
+ * `--panel-lane-top` is measured from the cluster itself (`hud.ts` writes
+ * `--status-clear` from `barHeight()`), so this cannot drift back.
+ */
 .idle__panel {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   right: 1rem;
   width: min(280px, calc(100vw - 2rem));
+  /* It starts lower than it used to, so it has to be allowed to scroll rather
+     than run off the bottom into the hotbar. */
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
@@ -2181,20 +2685,12 @@
 }
 
 .idle__title {
-  flex: 1;
+  /* No longer `flex: 1`: the close button anchors itself now, so the title has
+     no pushing to do and can size to its text. */
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.idle__close {
-  padding: 0 0.35rem;
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--t-body);
-  line-height: 1.2;
-  cursor: pointer;
 }
 
 .idle__close:hover {
@@ -2218,9 +2714,23 @@
 
 .idle__hint {
   margin: 0;
-  font-size: var(--t-label);
-  line-height: 1.4;
-  opacity: 0.8;
+  /*
+   * **The idle panel was the one panel still wearing the old hint treatment.**
+   *
+   * Every other panel hint moved to the body face last phase — `.pack__hint`,
+   * `.trade__hint`, `.shop__empty`, `.shipping__hint`, `.hud__coach`. This one
+   * was missed, so it stayed 12px in the label face and dimmed with
+   * `opacity: 0.8`, which is not a colour: it blended ink and the panel tan into
+   * #493233, a brown in no palette, that no token could reach and that
+   * `contrast.test.ts` could not see because it reads `color:`.
+   *
+   * `--faint` is the answer the codebase already had for "quiet text on a
+   * panel", and it is pinned on this exact ground.
+   */
+  font-family: var(--pixel);
+  font-size: var(--t-body-sm);
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 .idle__group {
@@ -2238,7 +2748,9 @@
   font-size: var(--t-label-sm);
   font-weight: 700;
   text-transform: uppercase;
-  opacity: 0.7;
+  /* Was `opacity: 0.7` — #604641, a DIFFERENT off-palette brown from the hint
+     four rules above it, in the same panel. */
+  color: var(--faint);
 }
 
 .idle__tasks {
@@ -2272,14 +2784,27 @@
  */
 .idle__banner {
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 0.75rem;
   padding: 0.4rem 0.5rem 0.4rem 0.9rem;
-  color: var(--paper-raised);
+  /*
+   * **Ink, not cream, and this was invisible text on the game's headline
+   * feature.**
+   *
+   * The banner shows the entire time idle mode is running — it is the only
+   * always-visible sign the farmer is working and it carries the only control
+   * that stops it. It asked for `--paper-raised` (#fdeade) and its ground is
+   * `ui-panel.png`, whose fill is #f7dbc6: **1.13:1**, cream on cream.
+   *
+   * The rule never declared a background, so nothing here looked wrong. `ui.css`
+   * frames `.toast, .idle__banner` in one rule; the toast was fixed for exactly
+   * this last phase and the banner sitting beside it was not. Ink is 14.38.
+   */
+  color: var(--ink);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 700;
@@ -2300,8 +2825,13 @@
 }
 
 .idle__stop:hover {
-  background: var(--barn);
-  color: var(--paper);
+  /*
+   * **No colour flip on hover.** This set cream on `--barn`, and the pink plate
+   * is painted over that background — so hovering the one control that stops
+   * idle mode took its label from 10.51:1 to **1.37:1** and it disappeared under
+   * the cursor. `ui.css` already lightens the plate on hover; the label has no
+   * reason to move.
+   */
 }
 
 /* ------------------------------------------------------------------ *
@@ -2318,15 +2848,23 @@
  * default and the tray is not.
  * ------------------------------------------------------------------ */
 
+/*
+ * 264px, up from 236.
+ *
+ * The reward line is the widest thing in the card and it was breaking inside
+ * its own phrase — "PAYS 2 x LEEK / SEEDS" and "PAYS 2 x POTATO / SEEDS" — so
+ * the unit and its quantity landed on different lines. 264 holds the longest
+ * reward string the seed list can produce on one line.
+ */
 .board {
-  --board-w: 236px;
+  --board-w: 264px;
 
   position: absolute;
-  top: 72px;
+  top: var(--panel-lane-top);
   /* Clear of the icon rail (Phase U2) — this was 1rem, i.e. underneath it. */
   left: var(--rail-clear);
   width: min(var(--board-w), calc(100vw - var(--rail-clear) - 1rem));
-  max-height: calc(100vh - 220px);
+  max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
   overflow-y: auto;
   padding: 0 0.7rem 0.7rem;
   pointer-events: auto;
@@ -2345,24 +2883,15 @@
   display: none;
 }
 
+/*
+ * Sticky and the row layout come from the shared header rules near the top of
+ * this file. The board was the only header that pinned itself; that is every
+ * header inside a scroller now, and stating it twice invites the two to drift.
+ */
 .board__head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
   margin: 0 -0.7rem 0.6rem;
   padding: 0.55rem 0.7rem;
   /* Frame and colour: `ui.css`, the timber board. */
-}
-
-.board__title {
-  flex: 1;
-  font-family: var(--pixel-label);
-  font-size: var(--t-label);
-  font-weight: 800;
-  text-transform: uppercase;
 }
 
 /*
@@ -2373,13 +2902,6 @@
  * a heading plus a tab row spends two lines saying what one line says. The
  * active tab IS the title.
  */
-.board__tabs {
-  flex: 1;
-  display: flex;
-  gap: 0.3rem;
-  min-width: 0;
-}
-
 .board__tab {
   flex: none;
   padding: 0.2rem 0.5rem;
@@ -2396,9 +2918,18 @@
   font-weight: 800;
   text-transform: uppercase;
   cursor: pointer;
-  /* Half-strength rather than a lighter colour, so the contrast ratio the
-     `contrast.test.ts` axe pass pins is not quietly reduced. */
-  opacity: 0.62;
+  /*
+   * This used to read: *"Half-strength rather than a lighter colour, so the
+   * contrast ratio the `contrast.test.ts` axe pass pins is not quietly
+   * reduced."*
+   *
+   * **It is exactly backwards.** `opacity` reduces the ratio — cream at 62% on
+   * the timber plank is #ac8f86, 5.63:1 rather than 12.75 — and the reduction is
+   * invisible to a test that reads `color:`. The pinned pair stayed green while
+   * the painted one moved. An inactive tab is a lighter colour now, declared, so
+   * the number is checkable.
+   */
+  color: #c8b3a6;
 }
 
 .board__tab.is-active {
@@ -2419,25 +2950,22 @@
  * Carries an `aria-label` in the markup as well, because a coloured chip is not
  * information to a screen reader — the same rule the level bar follows.
  */
+/*
+ * The tag's fill is `ui-tag-grey.png` — #d9d9d9, a LIGHT pill — so cream on it
+ * is 1.07:1. `ui.css` already pairs this exact selector with `--ink` and has
+ * been right all along; this file loads second and was overriding it with the
+ * colour that belongs on the dark plank. Ink on the grey pill is 13.45.
+ */
 .goalrow__tag {
   display: inline-block;
   padding: 0 0.3rem;
-  color: var(--paper);
+  color: var(--ink);
   font-family: var(--pixel-label);
   font-size: var(--t-label-sm);
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   vertical-align: middle;
-}
-
-.board__close {
-  padding: 0 0.35rem;
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--t-body);
-  line-height: 1.2;
-  cursor: pointer;
 }
 
 .board__close:hover {
@@ -2454,7 +2982,7 @@
   margin: 0;
   font-size: var(--t-body-sm);
   line-height: 1.4;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .goalrow {
@@ -2486,8 +3014,19 @@
   line-height: 1.35;
 }
 
+/*
+ * **16px and `border-box`, up from a 10px content height.**
+ *
+ * The trough in `ui.css` draws a `calc(1px * var(--ui-scale))` ink border —
+ * 3px — on all four sides, and `box-sizing` is not `border-box` on the HUD.
+ * So "height: 10px" meant 10px of trough inside 16px of box, and once the
+ * border was painted there were 4px of channel left for the fill. Every goal
+ * showed its progress as a hairline; at 0/6 it read as a rule under the title
+ * rather than as a bar with nothing in it.
+ */
 .goalrow__bar {
-  height: 10px;
+  box-sizing: border-box;
+  height: 16px;
   overflow: hidden;
 }
 
@@ -2521,11 +3060,16 @@
   color: var(--ink);
 }
 
+/*
+ * The same override as `.goalrow__tag`, on the moss plate (#a4c93c): `ui.css`
+ * says `--ink`, this file said cream, and the one button that hands the player
+ * a reward was the least readable thing on the board at 1.45:1. Ink is 9.94.
+ */
 .goalrow__claim {
   justify-self: start;
   margin-top: 0.15rem;
   padding: 0.3rem 0.7rem;
-  color: var(--paper);
+  color: var(--ink);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 800;
@@ -2551,8 +3095,7 @@
  */
 @media (max-width: 700px) {
   .board {
-    --board-w: 200px;
-    max-height: calc(100vh - 260px);
+    --board-w: 190px;
   }
 
   .goalrow__hint {
@@ -2580,7 +3123,7 @@
   margin: 0;
   font-size: var(--t-body-sm);
   line-height: 1.4;
-  color: #6d4738;
+  color: var(--faint);
 }
 
 .decorrow[aria-pressed='true'] {
@@ -2640,16 +3183,14 @@
   /*
    * This block is `max-height`, not `max-width` — it buys the camera rows back
    * on a SHORT viewport (T-18.03), which is why 1280x720 gets the trim and a
-   * 390x844 phone does not. Measured: 70px of track at 720 tall, 102px at 844.
-   * 64px still reads as a bar, and the pip keeps the number that matters.
+   * 390x844 phone does not.
+   *
+   * The track drops to 2x rather than to a pixel width. It is the pack's bar
+   * art now, and 42 source pixels wide: a 64px window showed half of it and a
+   * slice of the next bar along. Whole multiples only — see `.hud__track`.
    */
-  .hud__level {
-    padding: 0.2rem 0.4rem;
-    font-size: var(--t-label);
-  }
-
-  .hud__xpbar {
-    width: 64px;
+  .hud__track {
+    --track-scale: 2;
   }
 
   /*
@@ -2706,7 +3247,17 @@
   .touch__stick,
   .touch__act {
     position: absolute;
-    bottom: 6.5rem;
+    /*
+     * `--hotbar-clear`, not `6.5rem`.
+     *
+     * This was the one bottom-anchored pair in the HUD not reading the token,
+     * which exists precisely because `.hud__coach` guessed `4.6rem` and
+     * overlapped the hotbar at every viewport. 6.5rem is 104px at the default
+     * root size and the token's pre-mount fallback is also 104px, so they agree
+     * today by coincidence — but `hud.ts` republishes the token from a live
+     * measurement on every camera fit and this constant would not follow.
+     */
+    bottom: calc(var(--hotbar-clear) + var(--panel-top));
     pointer-events: auto;
     /* A thumb dragged across a control must drive it, not scroll the page or
        fire the browser's own long-press and double-tap gestures. */
@@ -2833,8 +3384,11 @@
    * plus 8px padding and 6px of border. `--slot-size` is written onto the HUD
    * root by `hotbar.ts` from `UI_SLOT.size`, so re-measuring the slot art moves
    * this box with it.
+   *
+   * That derivation is `--hotbar-clear` in `ui.css` now, because `.hud__coach`
+   * needed the same number and guessed it instead.
    */
-  bottom: calc(0.75rem + var(--slot-size, 54px) + 14px + 0.75rem);
+  bottom: var(--hotbar-clear);
   transform: translateX(-50%);
   /*
    * `100vw - 2rem` is what makes the 390px case work: at 390 the box is 358px
@@ -2890,12 +3444,32 @@
   font-size: var(--t-label);
   font-weight: 700;
   text-transform: uppercase;
-  color: var(--barn);
+  /*
+   * `--barn` measured **4.54** on the dialogue box's tan — four hundredths above
+   * AA, and `--barn` is the colour this HUD uses for warnings and refusals. The
+   * merchant's name is neither. `--frame` is the pack's timber brown, reads as a
+   * name rather than an alarm, and measures 9.78.
+   */
+  color: var(--frame);
 }
 
 .dialogue__text {
   margin: 0;
-  font-family: var(--pixel-label);
+  /*
+   * **The prose face, and this fixes an overflow rather than risking one.**
+   *
+   * The merchant's lines were set in Silkscreen — the uppercase chrome face, for
+   * short labels. Measured in the real box at 390x844, a 117-character line
+   * takes **four** rows in Silkscreen 14px and the box reserves three, so
+   * `DIALOGUE_MAX_LINE = 120` was already being violated by the stylesheet. Its
+   * own note says it was measured against "0.82rem monospace"; the face changed
+   * later and nobody re-measured.
+   *
+   * Pixelify Sans at the same 14px fits the same line in **three**. So moving
+   * prose to the prose face restores the constant the comment below depends on.
+   * (16px does not: that is four rows again.)
+   */
+  font-family: var(--pixel);
   /*
    * 0.82rem monospace is what `DIALOGUE_MAX_LINE = 120` was MEASURED against,
    * in the running game at 390x844: ~40 characters per row inside a 358px box,
@@ -2917,11 +3491,145 @@
   font-size: var(--t-label-sm);
   text-transform: uppercase;
   text-align: right;
-  opacity: 0.68;
+  /* Was `opacity: 0.68` — #654a44, the third one-off brown of the set. */
+  color: var(--faint);
 }
 
 @media (max-width: 480px) {
   .dialogue {
     padding: 0.85rem 1rem 0.7rem;
+  }
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Narrow screens — MOVED TO THE END OF THE FILE, and that is the fix
+ *
+ * This block used to sit near the top, before every panel it re-lays out. A
+ * media query adds no specificity, so `.board { width: min(var(--board-w), …) }`
+ * two thousand lines below simply won on source order and the board stayed
+ * 264px — later 190px — on a phone instead of taking the lane. `.hud__decor`
+ * has the same shape.
+ *
+ * The symptom was in the board's HEADER: crammed into 190px, the close button
+ * landed on top of both tabs (36x23 over "Requests") and made them unclickable,
+ * which read as a button-placement bug and was a cascade bug.
+ *
+ * It lives at the end now, after everything it overrides, which is where an
+ * override block belongs. Anything added below this line will beat it.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 700px) {
+  /*
+   * **The rail lies down on a phone, and the panel lane goes full width.**
+   *
+   * A 390px screen cannot carry a 44px left rail, a 272px top-right cluster, a
+   * panel and the hotbar in the layout a desktop uses, and it was not trying
+   * to: the panels simply ran under the rail and through the cluster. Measured
+   * at 390x844, with the panels open: rail x shop 44x130, rail x trade 44x136,
+   * rail x shipping 44x238, status x trade 298x93, pack x rail 44x219, plus
+   * `.pack` itself reaching x 398 in a 390px viewport.
+   *
+   * The rail is 403px tall — nearly half the screen — so no full-width panel
+   * can clear it while it is a column. Turned into a wrapping row under the
+   * cluster it costs one button-height, `--rail-clear` stops meaning anything
+   * horizontally, and the lane below it is the whole width.
+   *
+   * This is what the section heading above has promised since Phase U2 ("the
+   * side panels become bottom strips") and never delivered, because the panels
+   * kept their own `top` overrides instead of moving the lane.
+   *
+   * The lane itself needs no override: `hud.ts` measures the rail's bottom edge
+   * whenever the rail is a row, so `--chrome-top` already accounts for it —
+   * including the second row it wraps onto at 390px, which is what a
+   * `cluster + one button` constant got wrong.
+   */
+  .hud {
+    /* Nothing to clear horizontally once the rail is a row. */
+    --rail-clear: var(--panel-top);
+  }
+
+  .hud__rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    /* `--status-bottom`, not `--chrome-top`: the latter includes this rail. */
+    top: calc(var(--status-bottom) + var(--panel-top));
+    left: var(--panel-top);
+    right: var(--panel-top);
+    max-height: none;
+    overflow: visible;
+  }
+
+  /*
+   * Every panel takes the lane edge to edge. `transform: none` is load-bearing:
+   * they are centred with `left: 50%; translateX(-50%)` on desktop, and leaving
+   * the transform in place while pinning both edges shifts them half a screen
+   * left.
+   */
+  .shop,
+  .pack,
+  .trade,
+  .shipping,
+  .idle__panel,
+  .board,
+  .hud__decor {
+    top: var(--panel-lane-top);
+    left: var(--panel-top);
+    right: var(--panel-top);
+    transform: none;
+    width: auto;
+    max-width: none;
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--panel-lane-top) - var(--hotbar-clear));
+    overflow-y: auto;
+  }
+
+  /*
+   * The tab strip takes its own row rather than sharing one with the title.
+   *
+   * Wrapping alone put the shop's five tabs on THREE ragged rows at 390,
+   * because the title and the close button ate the first row's width before
+   * the tabs started. Given the full 366px the same five tabs need two.
+   */
+  .shop__head {
+    flex-wrap: wrap;
+  }
+
+  /*
+   * The SHOP's strip only. The board has no title, so its two tabs and its
+   * close button share a row comfortably inside the full-width lane (183 + 56
+   * of 366) — forcing a second row there would buy an empty first row holding
+   * nothing but the ✕.
+   *
+   * `.board__tabs` keeps `flex-wrap: wrap` from the contract, so it degrades on
+   * its own if a third section is ever added to `BOARD_SECTIONS`.
+   */
+  .shop__tabs {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .hud__toasts {
+    bottom: 36vh;
+  }
+
+  /*
+   * The banner moves to the middle of the field on a phone.
+   *
+   * **The reason has changed and the behaviour has not.** It used to be that
+   * the top bar wrapped to four rows at 390px and swallowed anything at `top:
+   * 72px` — the banner rendered over the Bag and Goals buttons, its own Get-up
+   * button overlapping theirs. That bar is gone, and `--panel-lane-top` now
+   * clears the cluster by measurement, so the original failure cannot recur.
+   *
+   * It stays because of what the banner IS: the one control that gives the
+   * player back a character they cannot currently move. At 390px the lane is
+   * already carrying whichever panel is open, and a banner queued below it is a
+   * banner below the fold. The middle of the field is the one place nothing
+   * else claims.
+   */
+  .hud__sleep {
+    top: auto;
+    bottom: 46vh;
   }
 }

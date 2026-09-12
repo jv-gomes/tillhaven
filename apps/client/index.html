@@ -8,7 +8,9 @@
       name="description"
       content="Plant before work, harvest at lunch. Tillhaven is a browser farming game where crops grow on real-world time, so a closed tab is just another few hours in the field."
     />
-    <meta name="theme-color" content="#f2e3ce" />
+    <!-- The page opens on the night register, and the browser chrome should
+         open on it too rather than flashing cream for one frame. -->
+    <meta name="theme-color" content="#052a3a" />
     <link rel="icon" href="/assets/crop-potato.png" type="image/png" />
     <link rel="preload" as="image" href="/assets/crop-potato.png" />
   </head>
@@ -51,10 +53,10 @@
           </div>
 
           <!--
-            The signature element. Six real plots on a real clock, filled in by
-            src/pages/landing.ts. Stage is derived from elapsed wall-clock time
-            on every frame — never accumulated — which is precisely how the game
-            server computes it.
+            Six real plots on a real clock, filled in by src/pages/landing.ts.
+            Stage is derived from elapsed wall-clock time on every frame —
+            never accumulated — which is precisely how the game server
+            computes it.
           -->
           <div class="panel" data-plot>
             <div class="panel__head">
@@ -68,6 +70,22 @@
               <span class="mono plot__speed" data-plot-speed></span>
             </div>
           </div>
+        </div>
+
+        <!--
+          The signature. A strip of real farm running the game's own
+          twenty-minute day, filled in by pages/heroSky.ts. Outside the .wrap
+          on purpose: it is a horizon, and a horizon that stops short of the
+          window edge is a picture of one.
+        -->
+        <div class="band" data-band>
+          <div class="band__scene" data-band-scene></div>
+          <div class="band__tint" data-band-tint></div>
+          <p class="band__readout">
+            <span class="band__time" data-band-clock>00:00</span>
+            <span data-band-segment>Morning</span>
+            <span class="band__note" data-band-note></span>
+          </p>
         </div>
       </section>
 

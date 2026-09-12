@@ -354,22 +354,34 @@ class Hud {
             ><i class="hud__coin" aria-hidden="true"></i><span data-gold>—</span></span
           >
           <!--
-            Farm level and the distance to the next one (T-30.02).
+            The two meters: farm level and energy.
 
-            The server has derived all of this since T-2.09 and returned
-            "experience"/"farmLevel" on every harvest since — and nothing on the
-            client read any of it, so a player could cross the level-5 trade gate
-            without a single number moving on screen. "progress" (T-30.01) is the
-            same derivation, on the shape the client already polls.
+            They are the SAME markup in the same three columns — glyph, track,
+            number — because they are the same kind of fact, and the cluster's
+            job is to let both be read in one glance. They were not: the XP
+            track started at x1318 and the energy track at x1249, so the two
+            bars a player compares had no shared edge to compare against, and
+            the level pip wore the pack's cyan plate while the energy fill beside
+            it was the pack's cyan. The one thing the original comment here said
+            must not happen - two meters you have to read twice to tell apart -
+            was happening through the pip instead of the bar.
 
-            A progressbar rather than a bare label because the bar IS the
-            information: "Lv 3" alone cannot say whether the next level is a
-            harvest away or an evening away.
+            Told apart by GLYPH now, not by colour: a star for the level, a
+            heart for energy, from the icon vocabulary the rail already uses.
+            Colour is the redundant channel rather than the only one, which is
+            also what makes them distinguishable to a colour-blind player.
 
-            (No backticks in this comment: it lives inside a template literal.)
+            Farm level itself is T-30.02: the server has derived it since T-2.09
+            and nothing on the client read it, so a player could cross the
+            level-5 trade gate without a number moving on screen. A progressbar
+            rather than a bare label because the bar IS the information - "Lv 3"
+            alone cannot say whether the next level is a harvest away or an
+            evening away.
+
+            (No backticks in these comments: they live inside a template literal.)
           -->
           <span
-            class="hud__xp"
+            class="hud__meter"
             data-xp
             role="progressbar"
             aria-valuemin="0"
@@ -377,21 +389,24 @@ class Hud {
             aria-valuenow="0"
             aria-label="Farm level progress"
           >
-            <span class="hud__level" data-level>Lv 1</span>
-            <span class="hud__xpbar"><i class="hud__xpfill" data-xpfill aria-hidden="true"></i></span>
+            <i class="ui-icon hud__meter-glyph" style="--icon-col: 19" aria-hidden="true"></i>
+            <span class="hud__track"
+              ><i class="hud__track-fill hud__track-fill--xp" data-xpfill aria-hidden="true"></i
+            ></span>
+            <span class="hud__meter-num" data-level>Lv 1</span>
           </span>
           <!--
-            Energy (MVP re-scope). Deliberately the same shape as the XP bar
-            beside it and deliberately not the same colour: green is already
-            taken, and two green bars in one cluster is one bar the player has
-            to read twice to identify.
+            Energy (MVP re-scope).
 
             The number is written out rather than left to the bar. A fraction is
             the only thing that answers "can I till this?", which is a question
-            with an exact arithmetic answer the player is entitled to.
+            with an exact arithmetic answer the player is entitled to - and the
+            level row deliberately does NOT carry its fraction, because "Lv 3" is
+            the answer to the question a player asks about levels. Same shape,
+            different number, each the one that is actually useful.
           -->
           <span
-            class="hud__energy"
+            class="hud__meter"
             data-energy
             role="progressbar"
             aria-valuemin="0"
@@ -399,10 +414,15 @@ class Hud {
             aria-valuenow="100"
             aria-label="Energy"
           >
-            <span class="hud__energybar"
-              ><i class="hud__energyfill" data-energyfill aria-hidden="true"></i
+            <i class="ui-icon hud__meter-glyph" style="--icon-col: 20" aria-hidden="true"></i>
+            <span class="hud__track"
+              ><i
+                class="hud__track-fill hud__track-fill--energy"
+                data-energyfill
+                aria-hidden="true"
+              ></i
             ></span>
-            <span class="hud__energynum" data-energynum>40/40</span>
+            <span class="hud__meter-num" data-energynum>40/40</span>
           </span>
         </div>
         <!--
@@ -1221,7 +1241,49 @@ class Hud {
   barHeight(): number {
     if (!this.mounted) return 0;
     const status = this.root.querySelector('.hud__status');
-    return status ? Math.round(status.getBoundingClientRect().height) : 0;
+    if (!status) return 0;
+    const box = status.getBoundingClientRect();
+    this.publishChromeTop(box);
+    return Math.round(box.height);
+  }
+
+  /**
+   * Tell the stylesheet how far down the top-anchored chrome reaches.
+   *
+   * `--chrome-top` is the vertical counterpart to `--rail-clear`, and every
+   * panel's `--panel-lane-top` is derived from it. Published from the SAME
+   * measurement the camera uses rather than declared in CSS, for the same
+   * reason `barHeight` is measured at all: the cluster's height moves with its
+   * padding, the type scale and the farm name's wrap, and a constant would go
+   * stale silently — which is exactly what `top: 72px` did for nine panels
+   * after Phase U2 deleted the 72px bar it was describing.
+   *
+   * **The rail counts only when it is a row.** On a desktop it is a tall column
+   * down the left edge and panels clear it horizontally through `--rail-clear`;
+   * folding its 400px into a vertical lane would push every panel off the
+   * bottom of the screen. Under the narrow-screen rule it lies down under the
+   * cluster instead, and then it genuinely is in the way — and it WRAPS, so its
+   * height is not "one button" and cannot be written as a constant. Reading
+   * `flex-direction` back off the element lets the stylesheet own the decision
+   * and this own only the arithmetic.
+   *
+   * Called from `barHeight`, so it is refreshed on every camera fit: a resize,
+   * a font swap or a longer farm name all move the lane with no second listener
+   * to forget.
+   */
+  private publishChromeTop(status: DOMRect): void {
+    if (status.bottom <= 0) return;
+    // The cluster alone. The narrow-screen rail positions itself from this,
+    // and must not read `--chrome-top` — that includes the rail's own height.
+    this.root.style.setProperty('--status-bottom', `${Math.round(status.bottom)}px`);
+
+    let bottom = status.bottom;
+    const rail = this.root.querySelector('.hud__rail');
+    if (rail && getComputedStyle(rail).flexDirection.startsWith('row')) {
+      bottom = Math.max(bottom, rail.getBoundingClientRect().bottom);
+    }
+
+    this.root.style.setProperty('--chrome-top', `${Math.round(bottom)}px`);
   }
 
   /**
@@ -1256,7 +1318,45 @@ class Hud {
     // with a retracting URL bar, but the canvas is sized from `innerHeight`,
     // so this has to agree with the canvas, not with the device.
     const bottom = Math.max(0, Math.round(window.innerHeight - box.top));
+    // The same number the stylesheet needs: everything anchored above the
+    // hotbar — the coach hint, the dialogue box, the toasts, every panel's
+    // max-height — has to clear exactly this. See `--hotbar-clear`.
+    if (bottom > 0) {
+      this.root.style.setProperty('--hotbar-clear', `${bottom}px`);
+      this.publishBottomChrome(bottom);
+    }
     return { top: this.barHeight(), bottom };
+  }
+
+  /**
+   * How far UP the bottom-anchored chrome reaches, hotbar and coach together.
+   *
+   * The toasts need this and `--hotbar-clear` is not enough: the coach hint sits
+   * one gap above the hotbar, so a toast that clears only the strip lands on the
+   * hint. Measured at 1440x900 it overlapped it by 6px — the toast "That plot is
+   * not cleared yet" printed across the top edge of "Walk with WASD…", which is
+   * two pieces of instructional text arguing over the same pixels, the exact
+   * complaint `.dialogue` already carries a note about.
+   *
+   * Measured rather than derived because the hint's height is not a constant: it
+   * wraps with the viewport width, and `--t-body-sm` at `line-height: 1.5` makes
+   * it one line at 1440 and three at 390.
+   *
+   * The coach is skipped when hidden — it retires itself on the first harvest —
+   * so the toasts move back down for a player who is past the tutorial.
+   */
+  private publishBottomChrome(hotbarClear: number): void {
+    let reach = hotbarClear;
+
+    const coach = this.root.querySelector('.hud__coach');
+    if (coach && !coach.hasAttribute('hidden')) {
+      const box = coach.getBoundingClientRect();
+      if (box.height > 0) {
+        reach = Math.max(reach, Math.round(window.innerHeight - box.top));
+      }
+    }
+
+    this.root.style.setProperty('--bottom-chrome', `${reach}px`);
   }
 
   /** True while a piece is armed, so the scene knows to draw the ghost. */

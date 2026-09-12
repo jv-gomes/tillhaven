@@ -61,6 +61,28 @@ correct.
   landscape two-page spread. `hud.css` already recorded that it cannot back
   stacked grids without stretching pixel art; the measurement agrees.
 
+  **U3-8 re-derived this independently and can now name the mechanism.** The
+  measured slice is correct — the middle band really is where stretching is
+  lossless — but the middle band contains **the spine**, a one-pixel-wide
+  feature that has to stay in the centre. `border-image` has no mode that
+  keeps a centred feature centred: `stretch` smears the spine across the
+  panel, and `repeat`/`round` tile it into several spines. That is the same
+  shape of trap as `ui-well.png` (measured inset 4, body 16px thick) and the
+  second member of a family worth naming: *a frame can measure sliceable and
+  still not be a frame.*
+
+  Cropping the left page alone (x1-119) **would** slice correctly, since the
+  spine becomes an edge rather than a middle — but a one-page book puts the
+  gilt ornaments down one side only, which reads as a panel missing half its
+  art rather than as a book.
+
+  So `.pack` keeps drawing the book in CSS from colours sampled off this file
+  (`--page`, `--cover`, `--gilt` in `hud.css`), which is the right answer and
+  was already the answer. `UI_INVENTORY_BOOK` stays declared in `assets.ts`
+  and unused: removing it from `IMAGES` would save one texture load and risk
+  shifting Tiled `firstgid`s, which is a bad trade for a phase that is not
+  otherwise touching the manifest.
+
 ## The measurements
 
 ## Sheets

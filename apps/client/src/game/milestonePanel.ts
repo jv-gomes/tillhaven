@@ -289,7 +289,7 @@ export class MilestonePanel {
     this.root.innerHTML = `
       <header class="board__head">
         <div class="board__tabs" role="tablist" aria-label="Board"></div>
-        <button class="board__close" type="button" data-close aria-label="Close board">×</button>
+        <button class="board__close" type="button" data-close aria-label="Close board"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
       </header>
     `;
 

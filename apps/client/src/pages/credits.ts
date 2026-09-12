@@ -1,6 +1,20 @@
 import '../styles/base.css';
 import '../styles/legal.css';
 import '../styles/credits.css';
+/*
+ * `ui.css` AFTER `base.css`, and that order is the point (Phase U3).
+ *
+ * It carries the three `@font-face` blocks and the pack's own primitives,
+ * scoped to `.hud, .ui-scope` — a hook `ui.css` has declared since Phase U and
+ * nothing outside the game had ever used. The site uses it now for the night
+ * register: the hero, the auth card and the boot curtain wear the same timber
+ * the HUD does.
+ *
+ * Later file wins at equal specificity, so `.ui-plate` beats `.btn` when an
+ * element carries both. The APPLIED section's HUD class names (`.shop`,
+ * `.pack`, …) never match anything here and cost nothing.
+ */
+import '../styles/ui.css';
 
 import { CROPS, creditsOfKind, type Credit, type CreditKind } from '@tillhaven/shared/config';
 import { sprite } from '../lib/sprite.js';

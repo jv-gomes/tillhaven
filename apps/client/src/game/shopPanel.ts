@@ -233,7 +233,7 @@ export class ShopPanel {
           <button class="shop__tab" type="button" role="tab" data-mode="gear">Gear</button>
           <button class="shop__tab" type="button" role="tab" data-mode="decor">Decor</button>
         </div>
-        <button class="shop__close" type="button" data-close aria-label="Close shop">×</button>
+        <button class="shop__close" type="button" data-close aria-label="Close shop"><i class="ui-icon" style="--icon-col: 15" aria-hidden="true"></i></button>
       </header>
       <div class="shop__list" data-list></div>
     `;

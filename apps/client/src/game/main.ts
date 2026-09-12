@@ -58,8 +58,15 @@ const game = new Phaser.Game({
   scene: [Preload, Farm, Interior],
 });
 
-// The fallback message is only for the case where this module never ran.
-document.getElementById('fallback')?.remove();
+/*
+ * The curtain is NOT removed here (U3-5).
+ *
+ * Its predecessor was — `#fallback` existed only for the case where this
+ * module never ran, so reaching this line meant its job was over. The curtain
+ * has a second job: it shows loading progress, which has only just started. It
+ * comes down in `Preload.create()`, via `boot.done()`, when the assets are
+ * actually there.
+ */
 
 // Dev-only handle for poking at scenes and input from the console. Stripped
 // from production builds by the `import.meta.env.DEV` guard.

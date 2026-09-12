@@ -145,9 +145,12 @@ describe('xpGained', () => {
  * other can see it — the same reason `hudHidden.test.ts` reads both as text.
  *
  * The specific trap: the fill's width is set from JS as an inline style. If the
- * stylesheet ever gave `.hud__xpfill` a `width` with `!important`, or the
+ * stylesheet ever gave `.hud__track-fill` a `width` with `!important`, or the
  * element were dropped from the markup, the bar would render at a constant
  * value and every test above would still pass.
+ *
+ * The rule is shared with the energy meter now — both are the same widget in
+ * the same three columns — so these guard both bars at once.
  */
 describe('the bar is actually wired to the HUD', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
@@ -168,16 +171,43 @@ describe('the bar is actually wired to the HUD', () => {
   });
 
   it('leaves the fill width to JS', () => {
-    const fill = CSS.match(/\.hud__xpfill\s*\{[^}]*\}/)?.[0] ?? '';
-    expect(fill, '.hud__xpfill rule not found').not.toBe('');
+    const fill = CSS.match(/\.hud__track-fill\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(fill, '.hud__track-fill rule not found').not.toBe('');
     expect(fill).not.toMatch(/width\s*:[^;]*!important/);
+  });
+
+  /**
+   * A bar nobody has rendered yet must read EMPTY, not full.
+   *
+   * The fill is a block element, so with no `width` it fills its track — and
+   * for the frame between the HUD mounting and the first poll landing, a farm
+   * that has not loaded would show full energy and a completed level. The old
+   * per-bar rules each carried their own initial width and the shared rule
+   * dropped it; this is why it is back.
+   */
+  it('starts the fill empty', () => {
+    const fill = CSS.match(/\.hud__track-fill\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(fill).toMatch(/width:\s*0\s*;/);
   });
 
   /** Decoration stops when asked to (the project's standing rule). */
   it('drops the fill transition under reduced motion', () => {
     const reduced = CSS.match(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.hud__xpfill\s*\{[^}]*\}/,
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.hud__track-fill\s*\{[^}]*\}/,
     );
-    expect(reduced, 'no reduced-motion rule for .hud__xpfill').not.toBeNull();
+    expect(reduced, 'no reduced-motion rule for .hud__track-fill').not.toBeNull();
+  });
+
+  /**
+   * The two meters must not be told apart by colour alone.
+   *
+   * They were: a green bar and a cyan bar, with the level pip wearing the
+   * pack's cyan tag directly above the cyan energy fill. A star and a heart
+   * from the icon vocabulary carry the distinction now, and colour confirms it.
+   */
+  it('gives each meter a glyph, not just a colour', () => {
+    const glyphs = HUD_TS.match(/class="ui-icon hud__meter-glyph" style="--icon-col: (\d+)"/g) ?? [];
+    expect(glyphs, 'both meters need a glyph').toHaveLength(2);
+    expect(new Set(glyphs).size, 'the two glyphs must differ').toBe(2);
   });
 });

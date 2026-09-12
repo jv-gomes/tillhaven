@@ -63,6 +63,7 @@ import { isModalOpen, isTypingInDom } from '../../lib/focus.js';
 import { touchControls } from '../touchControls.js';
 import { messageFor, codeOf } from '../../net/errors.js';
 import { hud } from '../hud.js';
+import { particleTexture } from '../particleTexture.js';
 import type { Equipped } from '../hotbar.js';
 import { DEPTH, groundDepth } from '../depth.js';
 import { NightOverlay } from '../dayNight.js';
@@ -709,17 +710,6 @@ export class Farm extends Phaser.Scene {
    * a restart would otherwise add it twice — the same guard `shippingBoxFrame`
    * already needs.
    */
-  private particleTexture(): string {
-    const key = 'fx-pixel';
-    if (!this.textures.exists(key)) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      g.fillStyle(0xffffff, 1).fillRect(0, 0, 2, 2);
-      g.generateTexture(key, 2, 2);
-      g.destroy();
-    }
-    return key;
-  }
-
   /**
    * A puff of something at the tile that was just worked (T-18.10, G-4/F-6).
    *
@@ -750,7 +740,7 @@ export class Farm extends Phaser.Scene {
     const emitter = this.add.particles(
       tileX * TILE_SIZE + TILE_SIZE / 2,
       tileY * TILE_SIZE + TILE_SIZE / 2,
-      this.particleTexture(),
+      particleTexture(this),
       {
         tint: [...burst.tints],
         speed: burst.speed,

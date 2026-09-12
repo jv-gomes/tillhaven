@@ -292,14 +292,28 @@ export class CharacterCreator {
         </p>
         <div class="creator__body">
           <div class="creator__stage" data-stage></div>
+          <!--
+            Inside the body, not after it, so the stylesheet can put the two
+            buttons in the same column as the preview. The left column was a
+            208px square of grass above ~390px of empty panel — the largest dead
+            area on the first screen a player ever sees — because the card's
+            height is set by six rows of swatches and the preview is pinned
+            square (a stretched one becomes a wall of grass, which U3-6 already
+            tried and reverted).
+
+            Putting the commit here also puts "Start farming" directly under the
+            farmer it commits, rather than diagonally across the card from it.
+          -->
+          <footer class="creator__actions">
+            <button class="ui-plate ui-plate--sand creator__btn" type="button" data-random>
+              Surprise me
+            </button>
+            <button class="ui-plate ui-plate--moss creator__btn" type="button" data-save>
+              Start farming
+            </button>
+          </footer>
           <div class="creator__rows" data-rows></div>
         </div>
-        <footer class="creator__actions">
-          <button class="creator__btn" type="button" data-random>Surprise me</button>
-          <button class="creator__btn creator__btn--primary" type="button" data-save>
-            Start farming
-          </button>
-        </footer>
       </div>
     `;
 
@@ -383,7 +397,9 @@ export class CharacterCreator {
       for (const swatch of spec.swatches) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'creator__swatch';
+        // `ui-slot` is the pack's inventory cell — the same one the hotbar and
+        // the backpack use, so "a thing you can pick" looks the same everywhere.
+        button.className = 'ui-slot creator__swatch';
         button.setAttribute('role', 'radio');
         button.title = swatch.label;
         // The art carries the meaning; the name is for screen readers and for
@@ -424,6 +440,13 @@ export class CharacterCreator {
       drawAppearance(canvas, spec.apply(this.working), redraw);
       const selected = spec.isSelected(this.working);
       button.classList.toggle('is-selected', selected);
+      /*
+       * `ui-select` is the pack's bracket overlay (`ui.css`), toggled rather
+       * than restyled: it draws OUTSIDE the cell, so the swatch keeps its own
+       * frame and — the point — keeps showing the character underneath. A
+       * fill-based selected state would tint the very thing being chosen.
+       */
+      button.classList.toggle('ui-select', selected);
       button.setAttribute('aria-checked', String(selected));
     }
   }

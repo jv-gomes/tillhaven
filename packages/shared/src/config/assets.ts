@@ -1965,6 +1965,38 @@ export const HOUSE_TIER_ART: readonly BuildingLook[] = [
   { sheet: OBJ_FARMHOUSE_T2, look: OBJ_FARMHOUSE_T2_LOOK },
 ];
 
+/**
+ * Where each tier's chimney mouth is, measured (U3-9) — `null` where a tier
+ * has no chimney.
+ *
+ * Offsets from the look window's TOP-LEFT, in source pixels, so a caller adds
+ * them to wherever it drew the house.
+ *
+ * **Two wrong measurements got here before this one, and both looked right.**
+ * The first took the highest opaque column in the sprite, which is the ROOF
+ * RIDGE — the chimney is shorter than the gable on both houses that have one,
+ * so smoke came out of the peak of the roof. The second took the highest
+ * *neutral* pixel in the stack's columns, which is four rows low, because a
+ * chimney's top row is its dark outline rather than its brick. This one finds
+ * the stack by colour (brick is the only near-neutral family on a sprite of
+ * red roof, cream wall and cyan glass) and then takes the topmost **opaque**
+ * row within those columns.
+ *
+ * **Tier 2 has no chimney.** `8.png` is a brick house with a round gable
+ * window and no stack at all, so it is `null` rather than a guess — a house
+ * that smokes from nowhere is worse than a house that does not smoke.
+ * `House.ts` stops the plume when the tier changes to one.
+ *
+ * Indexed by tier like `HOUSE_TIER_ART`, and `ambient.test.ts` pins the two
+ * lists the same length: a tier with no entry would smoke from its top-left
+ * corner instead of failing.
+ */
+export const HOUSE_CHIMNEY: readonly ({ readonly x: number; readonly y: number } | null)[] = [
+  { x: 12, y: 13 },
+  { x: 12, y: 13 },
+  null,
+];
+
 /* ------------------------------------------------------------------ *
  * Interior — the house (T-16.07)
  *
@@ -2116,6 +2148,27 @@ export const DECOR_STREET_LAMP: ImageSpec = {
   width: 64,
   height: 48,
 };
+
+/**
+ * The two lamps on that sheet, measured (U3-3).
+ *
+ * **The pack ships the lamp already lit, and that was worth checking for.** A
+ * column-occupancy scan of the 64x48 image finds two sprites, not one — an
+ * unlit lamp at x 4-28 and a lit one at x 36-60, both spanning y 1-37 — and
+ * the lit one is the only place in the file with bright warm pixels (#ffeb47
+ * at (38,9), #ffc71b at (39,13); the latter is where `base.css` samples
+ * `--lamp`). So dusk on the landing band cross-fades the pack's own two frames
+ * instead of laying a CSS glow over a dark sprite and hoping it reads.
+ *
+ * Same shape as `OBJ_TINY_HOUSE_LOOK`: a measured window onto an image the
+ * loader treats as one picture, so a consumer crops rather than guessing. The
+ * boxes are padded to a common 26x38 so the two can be stacked and
+ * cross-faded without either moving a pixel.
+ */
+export const STREET_LAMP_LOOK = {
+  off: { x: 3, y: 0, width: 26, height: 38 },
+  lit: { x: 35, y: 0, width: 26, height: 38 },
+} as const;
 
 export const DECOR_HAY_BALES: ImageSpec = {
   key: 'decor-hay-bales',

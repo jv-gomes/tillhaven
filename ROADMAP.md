@@ -55,7 +55,7 @@ continues from v1; D-1 is now decided.)
 | D-3 | Is gold tradeable between players? | Open. Cleanest RMT vector; safe default off | `GOLD_IS_TRADEABLE = false` in `config/economy.ts`; a test pins it |
 | D-4 | Tool tiers | Open, and **scheduled to be answered by T-36.07**, which is the first task that gives tiers a way to be *made* rather than bought. Art has 9 tiers (Wood→Obsidian); only Wood exists. The question is unchanged — what does a better tier do? **The recommendation carried into T-36.07 is area (a 3x3 watering can) plus an `IDLE_ACTION_MS` reduction, and explicitly NOT speed**: the swing animation is the client's only action cooldown and the thing covering request latency, so shortening it makes the game feel worse rather than better. Must be recorded as decided before it is built | Only `*_wood` tool items exist until decided; T-36.07 |
 | D-5 | Energy/stamina | **DECIDED (MVP re-scope, 2026-09-08): YES**, live since R-5. The Phase 30 recommendation below was to close it as "no"; it is kept because the reasoning is what sized the bar — a new farm can work every starting plot exactly once, and recovery is ten real minutes, not a real day, so the bar ends a session rather than a day. Idle mode spends it too. *The superseded recommendation:* The gameplay overhaul's whole premise is that active play should be where depth lives, and a stamina bar is a mechanic for *stopping* people playing — in a game whose §1 pillar is short frequent sessions, it punishes the exact behaviour the overhaul is trying to encourage. Fishing (Phase 34) and mining (Phase 36) make this sharper, not softer | `packages/shared/src/config/energy.ts`; `players.energy_spent` / `sleeping_since` |
-| D-29 | Does the game bundle a typeface? | **DECIDED (Phase U): YES** — two, both SIL OFL 1.1, self-hosted. `hud.css` had refused one on the grounds that it "would mean a second licence in ATTRIBUTION.md for a decision nobody has taken yet"; the decision was taken. Pixelify Sans for body, Silkscreen for uppercase labels. Self-hosted rather than linked: a Google Fonts `<link>` hands every player IP to a third party and puts a render-blocking request in front of the game | `apps/client/public/fonts/` (+ `README.md`, both `OFL.txt`); `@font-face` in `styles/ui.css`; `config/credits.ts` |
+| D-29 | Does the game bundle a typeface? | **DECIDED (Phase U): YES** — **three since Phase U3**, all SIL OFL 1.1, self-hosted. `hud.css` had refused one on the grounds that it "would mean a second licence in ATTRIBUTION.md for a decision nobody has taken yet"; the decision was taken. Pixelify Sans for body, Silkscreen for uppercase labels, and **Bitter for paragraphs** — U3 put the faces on the marketing pages too, and neither pixel face can set body copy: both are drawn on fixed grids (10px and 8px) and only stay crisp at integer multiples, while a landing-page paragraph reflows at every viewport. A slab was chosen because a slab's serifs are rectangles and so are pixels. Self-hosted rather than linked: a Google Fonts `<link>` hands every player IP to a third party and puts a render-blocking request in front of the game | `apps/client/public/fonts/` (+ `README.md`, both `OFL.txt`); `@font-face` in `styles/ui.css`; `config/credits.ts` |
 | D-30 | Where does nine-slice geometry live? | **DECIDED (Phase U): in `scripts/lib/ui-crops.mjs`, and nowhere else.** Not in `assets.ts` — every UI frame is consumed by CSS, never by Phaser's loader, so adding them to `IMAGES` would burn Tiled `firstgid`s for assets Phaser never draws. Three checks keep the one copy honest: `measure-ui.mjs --check` re-derives every inset from the pixels, `prepare-assets.mjs` decodes each crop it writes, and `uiSlices.test.ts` compares the stylesheet to the table | `scripts/lib/ui-crops.mjs`; `docs/ui-measurements.md` |
 | D-6 | Chest placement | Open. MVP has one fixed chest on the map. Placeable/multiple chests later? | Single chest object in `farm.json` |
 | D-7 | Doorways: walk-through gap, or faced-tile trigger? | **DECIDED (Phase 16): trigger**, as proposed. Buildings stay solid at every tier, no gap — a gap in a building is a hole you can walk into and not leave, which is worse than no door. The door becomes a `facedTarget()` entry like the chest. Opened by T-15.05, settled by T-16.11 | `config/collision.ts` — `HOUSE_DOOR` |
@@ -16054,6 +16054,288 @@ pressed state says on/off and nothing more.
 
 ---
 
+# Phase U3 — the front door joins the game
+
+## Where this came from
+
+Phase U bundled two pixel faces, cut the pack's UI into nine-slices and reskinned
+twelve panels — and then wrote down, deliberately, that the marketing pages were
+staying as they were: *"pulling Silkscreen onto them is a design decision nobody
+has asked for."* That was the right call to record and the wrong state to leave
+standing, because the front door was the **archetypal generated-design default**:
+cream paper `#f2e3ce`, terracotta `--soil`, `3px solid` rules, `5px 5px 0` hard
+shadows, square corners, `system-ui` body text, and `ui-monospace` +
+`letter-spacing: 0.16em` + `uppercase` standing in for a label face. Six pages of
+it, in front of a game that looks nothing like it, using **none** of the two
+fonts already in the repo — because `ui.css` was imported by `main.ts` and by
+nothing else.
+
+Somebody asked. This phase closes the item.
+
+## The thesis: the page is a day
+
+Two registers, and the split carries meaning rather than decorating. **Night** —
+masthead, hero, closer, the boot curtain — is the farm working while you are
+gone. **Paper** — the reading sections, legal, credits — is you reading about it.
+The page opens at night, moves to daylight paper where there is prose, and
+returns to night for the last call to action, so the final frame of the site and
+the first frame of `/play` are the same colour and the seam disappears.
+
+It is also why the answer was not "apply the HUD skin to a webpage". Nine-slice
+timber at 2x around 17px/1.62 paragraphs is heavy and hard to read. The boldness
+is spent on the hero, the auth card and the boot; everything else stays quiet.
+
+### U3-1 — two registers, and a token that is not cream · **done**
+
+`base.css` grew a night register beside the paper one: `--night-deep`,
+`--night-ink`, `--night-ink-soft`, and `--lamp`.
+
+**`--lamp` is sampled, not chosen.** `decor-street-lamp.png` at (39,13) — the
+amber ring inside the lantern glass, read out with `scripts/lib/png.mjs`, the
+same method that sampled `--panel-fill` off `Clock/Extras.png`. The flame's
+hotter core (`#ffeb47`, 16px) reads lemon at text sizes; `#ffc71b` is what the
+glass actually throws. 9.61:1 on `--night` as text, 11.33:1 the other way round
+with `--ink` on it, so one token serves as both the accent and the lit CTA's
+fill.
+
+**The five night tokens do not flip in the dark theme, and that is the point.**
+Every token above them is a reading colour and inverts; these are a depicted
+night sky. `--paper` becomes `#0b1f2a` after dark, so a night panel written
+`color: var(--paper)` paints dark-on-dark at **1.34:1** — the same shape of bug
+`hud.css` hit from the other side when it borrowed `var(--night)` from a
+stylesheet the game page never loads. `contrast.test.ts` gained a night block:
+eight pairs, a guard that `--paper` cannot stand in for `--night-ink`, a guard
+that the dark theme does not redefine the sky, and a guard that **timber on
+night is 1.12:1** — as unreadable as ink on timber, and just as available a
+mistake.
+
+All three new guards were break-tested: dimming `--lamp` failed three pairs,
+overriding it inside the dark block failed the sky guard, and deleting the
+sampled-pixel comment failed the provenance guard.
+
+### U3-2 — the site gets the game's letters · **done**
+
+Bitter bundled as the third face (SIL OFL 1.1, variable 400-700, latin +
+latin-ext, 65 KB), following `public/fonts/README.md`'s five-things-in-one-commit
+rule — woff2, licence, `@font-face`, `ATTRIBUTION.md`, `credits.ts`. Removing
+the credits row was break-tested and `config.test.ts` failed the build, as
+designed.
+
+**Why a slab.** Pixel faces are all stem and no contrast, because every stroke is
+the same number of pixels wide. A high-contrast display serif fights that; a slab
+agrees with it, because a slab's serifs are rectangles and so are pixels. It is
+also deliberately not the fashionable pick — a high-contrast serif on cream is
+precisely the look this phase removes.
+
+`--font-display` became Silkscreen, `--font-sans` became Bitter, `--font-pixel`
+(Pixelify Sans) was added for the night register only, and `--font-mono` was
+added for the two places a label face is wrong — `.legal code` and the `/credits`
+licence strings, which had been saying `var(--mono, …)`, a token Phase U deleted,
+leaving them silently on the fallback argument.
+
+`ui.css` is now imported by all four page entries, after `base.css` so the
+primitives win at equal specificity. **`.ui-scope` has existed as the documented
+hook since U-4 and nothing had ever used it.**
+
+Every `letter-spacing` on a Silkscreen rule had to go in the same commit — the
+spacing is drawn into the face — and every size had to move from `rem` to whole
+pixels, since `0.72rem` is 12.24px and lands the stems between device pixels.
+`siteType.test.ts` pins both, plus a whole-pixel-tracking rule for Pixelify, no
+`font-weight: 800` (above Bitter's variable maximum, which synthesises a smeared
+outline rather than a bolder one), and zero requests to `googleapis`/`gstatic`.
+
+**The test found a rule nobody had looked at.** `.wordmark` — the site's own name
+— was `ui-monospace` at `letter-spacing: 0.22em`, `font-weight: 800`, `0.95rem`:
+three separate violations in one rule, on the brand mark. It is Pixelify Sans at
+20px now, the same face the HUD writes "Tillhaven" in.
+
+### U3-3 — the front door runs your clock · **done**
+
+The hero grew a **band**: a full-bleed strip of real farm running the game's own
+day/night cycle, off `darknessAt(timeOfDayAt(now).phase)` — the same two pure
+functions `game/dayNight.ts` calls. No round trip, no column, no server state.
+
+**The cycle is twenty real minutes, not twenty-four real hours** (`DAY_LENGTH_MS`),
+and that is what makes it worth building: the sky visibly moves while the page is
+read, rather than being a state a visitor happens to catch once a day. It is
+epoch-anchored, so two people in different timezones see the same sky, and
+someone who clicks through to `/play` arrives at the hour they were just looking
+at.
+
+`heroSky.ts` is pure with 13 tests, split from the DOM the way `touchInput.ts` is
+split from `touchControls.ts`. It re-declares `HERO_NIGHT_MAX_ALPHA = 0.55`
+rather than importing it — a marketing page must not reach into `game/`, which
+type-imports Phaser — and **the test reads `dayNight.ts` off disk and pins the
+two copies equal**, because two independent declarations of one number is exactly
+how a site and a game start depicting different nights.
+
+**The tint is on the band, not the hero.** Cycling the whole panel would put the
+cream headline on a surface that is 11.9:1 at midnight and unreadable at noon.
+Confined to the band it costs no legibility and the effect survives intact.
+Polled at 4Hz rather than animated — the cycle moves 0.0008 of darkness a second
+and rAF would repaint sixty times per invisible change — and frozen after the
+first paint under `prefers-reduced-motion`, showing the correct sky rather than
+an empty box.
+
+### U3-4 — the auth card is a window · **done**
+
+`/login` and `/register` moved onto the night register, and the card became a
+**lit window** standing in it — the same relationship the hero's plot panel has
+to the hero. It wears `ui.css`'s timber ring by joining the shared window rule
+rather than copying it, which makes `.auth__card` the first selector in that
+list that is not part of the HUD. That is what `.ui-scope` was declared for in
+Phase U and had never been used for.
+
+The card's header stopped being a flat `background: var(--soil)` band and became
+**a small window onto the same farm at the same hour** — `auth-form.ts` drives
+it from `heroSkyAt`, the same function the landing band uses. A visitor who
+reads the pitch at dusk and clicks "Log in" does not walk into a different
+afternoon. The interior stays paper, because inputs are for reading and typing
+and that is the one place legibility outranks atmosphere.
+
+The idle farmer got dressed here too, for the reason `landing.ts`'s did.
+
+**One thing U3-2 got wrong and this task reverted.** `.field__error` was swapped
+to Silkscreen along with the labels, which made "USERNAME MUST BE AT LEAST 3
+CHARACTERS." an uppercase pixel-type sentence shouted at someone who has just
+made a mistake. A label is one to three words and Silkscreen is right for it; an
+error is a sentence explaining how to fix something, and it is back on the body
+face.
+
+### U3-5 — the boot curtain · **done**
+
+The worst screen in the product is gone. `Preload.buildProgressUi()` drew
+`ui-monospace` text and a flat green `Phaser.GameObjects.Rectangle` — and
+because it was Phaser, it could not appear until Phaser had booted, so the
+**genuine first frame of `/play` was an empty `#052a3a` rectangle** for however
+long the module graph took.
+
+`play.html`'s `#fallback` became `#boot`: inline markup and inline CSS that the
+browser paints on first pass, carrying the wordmark, the pack's own bar art and
+a Silkscreen progress line on the night register the previous page just ended
+on. `boot.ts` drives it; `Preload` reports progress and dismisses it, and
+`main.ts` deliberately does **not** remove it the way it removed `#fallback` —
+that element's only job was to prove the module had not run, and this one has a
+second job that is only just starting.
+
+Verified at 80ms into a load: the curtain is up, in fallback fonts, with the bar
+art already drawn. The failure path was exercised by blocking one asset at the
+network layer (`Network.setBlockedURLs`, so nothing in the repo had to be
+broken): the curtain **stays up**, the bar and progress line hide themselves in
+CSS, and the missing key is named above a link back to the landing page. A
+player who cannot load the game needs somewhere to go more than a diagnostic.
+
+`boot.test.ts` pins the ordering — 17 source-text checks, since there is no
+jsdom — including that `boot.fail` is immediately followed by `return`, which
+was break-tested by deleting the return.
+
+### U3-6 — the creator wears the pack · **done**
+
+The first screen a new player ever touches had a flat `var(--ink)` rectangle for
+a header and 2px CSS-border chips for swatches, inside a card that already had
+timber around it. The header joined the shared panel-header rule; the swatches
+became `.ui-slot`, the same cell the hotbar and backpack use, so "a thing you
+can pick" looks the same in both places ten seconds apart.
+
+**Selection is `.ui-select`, which had been cut, shipped and never used.** It
+overlays rather than replaces — brackets outside the cell — so the swatch keeps
+showing the character it exists to show you, which a fill could not do without
+tinting it. Brackets alone proved too quiet in this context (six selected
+swatches among twenty-eight near-identical neighbours, against the hotbar's one
+in twelve), so selected also takes `ui-slot-lit.png`, the same pairing
+`.slot.is-picked` uses.
+
+The preview stopped being an untreated rectangle and became a square window
+onto grass — `#79bf56`, the farm's own ground tile — so the farmer is previewed
+standing where they will actually stand.
+
+**`.hud__coach` joined the creator's hidden list.** The onboarding hint was
+printing "Walk with WASD, face a plot and press E" across the clothes row:
+advice about a farm the player cannot reach, covering the thing they are
+choosing. Same bug as BUG-15, one element later.
+
+## Six things this phase found that nobody was looking for
+
+**The lamp was already lit.** A column-occupancy scan of `decor-street-lamp.png`
+found *two* sprites in the 64x48 image, not one: an unlit lamp at x 4-28 and a
+lit one at x 36-60. So dusk cross-fades the pack's own two frames
+(`STREET_LAMP_LOOK`) instead of laying a CSS glow over a dark sprite and hoping
+it reads. Measuring the file before styling it was worth the ten minutes.
+
+**The promo farmer had no clothes.** `CHAR_PROMO_WALK`'s own note in `assets.ts`
+says it: *"Skin layer only, variant 1"*. The landing page and the closer scene
+have been showing a bare figure with no eyes, hair or clothes since T-8.03 — the
+worst sprite on the page, standing in the hero. `promoFarmer()` stacks the four
+layer strips the way the game composes a character, at one fixed appearance so
+two screenshots of the page agree.
+
+**The house was a shed.** `OBJ_TINY_HOUSE_LOOK` is documented three lines above
+itself as the tiny-house kit's *"house SILHOUETTES (roof+wall, no door/window)"*,
+and the landing page had been advertising a doorless box while the game drew a
+farmhouse. `HOUSE_TIER_ART[0]` — the tier-0 farmhouse `Farm.ts` actually puts on
+the map, chimney, door and flower-box windows included — is a two-line swap, and
+it fixed the closer scene at the same time.
+
+**`ui-bars.png` has no empty track.** `ui.css` described its two bands as
+"empty" at y101 and "filled" at y116. A pixel scan says they are the same FULL
+bar in two colours — green `#6ebd3c` and cyan `#2eafc7`, identical `#8a3625`
+frame. The sheet is a colour catalogue, not a state pair, so layering them gives
+a cyan bar creeping over a green one rather than a bar filling up. The comment
+is corrected and `.ui-bar__fill` now says what it is not.
+
+**`.ui-bar` let the caller decide its width, and the track is 42px.** A column
+scan finds four tracks per row (x3-44, x54-80, x99-140, x147-188); the old
+comment said "192 source px wide", which is the width of the *sheet*. Any
+consumer wider than `42px * --ui-scale` silently reveals the next bar along, and
+the boot curtain at 192 showed all four with their end caps interleaved. Nothing
+had ever hit it because **`.ui-bar` had no callers** — written in Phase U, and
+the HUD's own bars are hand-built in `hud.css`. The width is declared on the
+primitive now, so the first real consumer was not also the first bug report.
+
+**The plate vocabulary is unreachable from the HUD, and that is structural.**
+`ui.css`'s APPLIED section re-implements `.ui-plate` under HUD class names
+(`.hud__btn`, `.shop__close`, `.creator__btn`, …) and pins `--plate-src` itself.
+Both that rule and `.ui-plate--sand` are one class of specificity, and APPLIED
+is later in the file, so **adding a colour modifier to any HUD button does
+nothing** — which is most of why Phase U's own notes say the button vocabulary
+is "barely touched". It surfaced because the creator's two buttons stayed
+identical no matter which modifier they were given: a second blanket rule was
+forcing moss onto both, so "Surprise me" was as green as "Start farming" and a
+player reading green as "yes" would hit the reroll looking for the way out.
+`.creator__btn` is out of both lists and composes the primitive properly.
+Converting the rest is a bigger change than the creator needed, and the note now
+sits on the rule.
+
+## Two bugs worth recording, because both were silent
+
+**A too-short flex container deletes the top of a picture.** `.band__scene`'s
+`min-height` was wrong twice — 96 clipped the farmhouse roof, 152 took the
+chimney — because both numbers were guesses at the gap wanted underneath rather
+than measurements of the sprite. Under `align-items: flex-end` with `overflow:
+hidden` nothing overflows and nothing warns; the roof simply leaves, and what
+remains reads as a grey striped box nobody can name. It is 208px, which is the
+measured 87-source-pixel window at scale 2 plus headroom.
+
+**`background-repeat` repeats the whole image, not the window.** The band's grass
+first tried `background-position: -144px -32px` with `repeat` to tile
+`GRASS_FILL_FRAME` out of the terrain atlas, and painted the sheet's decorative
+autotile edges across the entire strip. CSS has no crop-then-repeat for one cell
+of an atlas. The fix is a flat `#79bf56`, which `assets.ts` records as exactly
+what that tile is — *"fully opaque and a single colour"* — so the rectangle is
+pixel-identical to tiling it.
+
+**And one that took two tries.** A paper `.panel` standing inside the night
+register has to pin *both* halves of its palette. Letting the night overrides
+cascade in made the plot demo vanish (cream ink, transparent fill); pinning only
+the ink then broke the dark theme, where `--paper-raised` inverts to `#123040`
+and the pinned `#2a1018` header landed on navy. The panel is a picture of the
+daytime farm, the daytime farm has no dark mode, and `.plot__soil` was already
+pinning its world colours one level down for the same reason.
+`contrast.test.ts` has a "lit window" block now, checking literals rather than
+tokens precisely because these must not follow the tokens.
+
+---
+
 # The forward plan, reconciled with the re-scope (2026-09-09)
 
 Phases 32-36 were written before the MVP re-scope and Phase 32 was formally
@@ -16119,3 +16401,593 @@ systems are cheap to extend is that every verb aims at a tile.
 **Opens D-27: where do you fish, and does a fish have anywhere to go?** Both
 halves must be answered before T-34.01, because they decide whether the phase is
 "one config file and a minigame" or "a map change and a dependency on quests".
+
+## Phase U4 — the HUD stops covering the game
+
+A design pass on the in-game screen. Client only: no server, no schema, no
+endpoint, no config. The camera is deliberately untouched, so the ~40% of a
+1440x900 viewport that is flat blue around the fitted map is still flat blue —
+**D-12 stays open** and is now the largest visual problem left.
+
+### U4-1 — nine panels were anchored to a bar that no longer exists · **done**
+
+`grep 'top: 72px'` returned **nine** rules in `hud.css`. 72px was the height of
+the full-width top bar **Phase U2 deleted**. Nothing failed, because a stale
+constant is still a number.
+
+What it cost, measured with `getBoundingClientRect` rather than inferred:
+
+| viewport | `.idle__panel` x `.hud__status` |
+|---|---|
+| 1440x900 | **268 x 85** |
+| 1280x720 | **268 x 76** |
+| 390x844 | **294 x 81** |
+
+`.idle__panel` is the only right-anchored panel in the game and the status
+cluster is anchored top-right. Both are `z-index: auto` siblings, so which one
+won was decided by DOM order, and `.idle` is declared last in `play.html`. What
+it covered was exactly the level bar and the energy bar: a player opening idle
+mode to decide whether to let the farmer work lost the two numbers that answer
+it.
+
+**`--rail-clear` was half a fix.** Phase U2 added it because two left-anchored
+panels sat under the rail and swallowed its clicks. The vertical counterpart was
+never built. It is `--chrome-top` now, and every panel's `--panel-lane-top`
+derives from it.
+
+**One lane, every width, no exceptions.** Letting centred panels stay high was
+tried first and rejected: at 1440 a 520px panel centred at x460-980 does miss a
+cluster starting at x1156, but that is true only above some width nobody has
+written down, and at 390px the same panel spans the screen and lands on the
+cluster. The lane is below the chrome always. It costs ~100px of panel height on
+a 900px screen and buys the invariant that **no panel can cover the player's own
+gold, level or energy** — the one readout that has to stay legible *while* a
+panel is open, to know whether you can afford what you are looking at.
+
+**Three numbers are measured and published by `hud.ts`, not declared in CSS:**
+`--status-bottom` and `--chrome-top` from `barHeight()`, `--hotbar-clear` from
+`chrome()`. Both already measured these boxes for the camera (T-18.03); this is
+one measurement with two consumers.
+
+### U4-2 — three constants that described a layout the layout had not agreed to · **done**
+
+Each of these was found by the probe, not by reading:
+
+**The rail wraps.** The first lane arithmetic was `cluster + one rail button`.
+Right until 390px, where eight buttons need two rows, the rail measured 94px
+instead of 44, and every panel landed on its second row. `hud.ts` measures the
+rail's bottom edge instead — but only when it is a ROW, read back off
+`flex-direction`. On a desktop it is a 400px column down the left edge and
+panels clear it horizontally; folding that into a vertical lane would push
+everything off the bottom of the screen. CSS decides the direction, the
+measurement reads it.
+
+**`.hud__coach` guessed `4.6rem`** and overlapped the hotbar at every viewport —
+620x30 at 1440, 492x6 at 1280, 195x30 at 390 — straight across the slot numbers.
+`.dialogue`, the same kind of strip in the same place, derives its clearance
+instead. That derivation is `--hotbar-clear` now and both read it.
+
+**And `.dialogue`'s derivation was itself 12px short**, which is why
+`--hotbar-clear` ended up measured rather than copied. `0.75rem +
+var(--slot-size) + 14px + 0.75rem` computes to 92px; the strip occupies 104. The
+`14px` is padding plus a 6px border, and the plank's `border-image` is 5px at
+`--ui-scale: 3`, so the real border is 30px. It had been wrong for as long as it
+existed. `.dialogue` had enough slack to absorb it; a panel's `max-height` did
+not.
+
+**The hotbar overflowed its own `max-width`** — `x -12 → 402` in a 390px
+viewport, slot 1 clipped off the left edge and slots 8-12 unreachable, with
+`overflow-x: auto` scrolling a box already wider than the screen clipping it.
+Missing `box-sizing: border-box`, so the plank's frame was added outside the
+width. The same bug `.hud__status` already carried a note about.
+
+On a phone the rail now lies down as a wrapping row under the cluster and the
+panels take the full width, which is what this file's own "Narrow screens: the
+side panels become bottom strips" heading has promised since Phase U2 and never
+delivered — the panels kept private `top: 60px` overrides instead of moving the
+lane. Those are gone too.
+
+### U4-3 — the level and energy cluster · **done**
+
+Eight rules described the same widget twice (`.hud__xp` + `.hud__level` +
+`.hud__xpbar` + `.hud__xpfill` against `.hud__energy` + `.hud__energybar` +
+`.hud__energyfill` + `.hud__energynum`), which is how they drifted. Measured:
+
+- **The XP track started at x1318 and the energy track at x1249**, in a 272px
+  cluster whose other three rows all began at x1249. Two bars meant to be
+  compared, with a 69px step between them and no shared edge.
+- **At Lv 1 the XP fill is 0% wide** and what showed through was a bare dark
+  rectangle. A new player's first screen had what read as a broken widget.
+- **The level pip wore `ui-tag-cyan.png`** directly above a cyan energy fill.
+  The comment at `hud.ts:384` says energy took cyan *specifically* so two bars
+  would not be confusable; the pip undid it.
+- `.hud__name` was Silkscreen at 10px — the smallest type in the game spent on
+  the player's own farm name. `--t-num: 18px` existed, annotated "the numbers a
+  player reads at a glance", and **nothing in the game used it**.
+
+One `.hud__meter` now, twice, `display: contents` into a three-column grid on
+`.hud__readouts` — glyph, track, number — so both tracks share a left and right
+edge. Told apart by **glyph** (star, heart, from the `.ui-icon` vocabulary the
+rail already uses), with colour as the redundant channel rather than the only
+one. The cluster widened 17rem → 21rem to hold two real tracks plus a glyph and
+a number column.
+
+**The bars are the pack's art, drawn the way the boot curtain draws it**
+(`play.html:112-152`): the same `ui-bars.png` window painted twice, the lower
+copy under a scrim as the groove, the upper clipped by width as the fill. An
+empty bar then looks like an *unlit bar* rather than a hole. `ui-bars.png` ships
+no empty track — U3-5 established it is a colour catalogue, not a state pair —
+and drawing a groove by hand double-frames, because the bar art carries its own
+frame at rows 2 and 7 of 9. 42 source pixels, whole multiples only: 126px at
+`--track-scale: 3`, dropping to 2 on a short viewport instead of to a pixel
+width (the old `width: 64px` would have shown half a bar and a slice of the next
+one along).
+
+**Empty energy tints the GROOVE, not the fill.** It used to recolour
+`.hud__energyfill`, which at zero energy is zero pixels wide — the state that
+most needed to be visible was the one state in which nothing was drawn.
+
+The shared fill rule also needed `width: 0` putting back. Without it a block
+element fills its track, so both bars painted FULL for the frame between the HUD
+mounting and the first poll landing. `levelBar.test.ts` pins it.
+
+### U4-4 — the orange wall, and a selection that read as disabled · **done**
+
+**Every slot wore `--soil` (#c46120) whether or not it held anything.** A new
+player's hotbar is four items and eight empties, so the strip along the bottom
+was twelve equally loud orange squares — the largest single block of colour in
+the game, most of it saying nothing. Empty cells are desaturated and darkened
+now (not `opacity`: a transparent cell shows grass through it and reads as a
+hole). The filled cells are the bright ones, which is the correct ordering.
+
+**The selected creator swatch was the weakest cell in its row.** Measured at 3x:
+every unselected swatch carries the pack's #1c0a18 outline and the selected one
+carried none. The bracket ring sits at `inset: calc(-2px * var(--ui-scale))`,
+exactly on the cell's own border, and the brackets are drawn in a pale tan very
+close to `--panel-fill` — so the one swatch the player had chosen faded into the
+panel while twenty-two they had not kept a crisp black frame. **The art is fine
+and works in the hotbar**; it was being used on the one background it disappears
+on. A `box-shadow` ring in the pack's outline black, spread to the bracket's own
+bleed, gives the brackets the dark ground they have on the timber plank. An
+`outline` was tried first and drew a strikethrough through every row label.
+
+Also: `.hotbar__key` at 10px Silkscreen had strokes about as wide as the 1px ink
+outline drawn around them on four sides, so the outline closed over the letter
+and the shortcut numbers read as dark smudges. The rule already said "a shortcut
+hint nobody can read is not a hint"; it was two points short of being true.
+
+### U4-5 — prose stopped being set in the label face · **done**
+
+Every sentence in the HUD was Silkscreen — the uppercase chrome face — at 10 or
+12px with no line-height. Silkscreen is drawn on an 8px grid for short uppercase
+labels and is the right face for "BACKPACK", "GOALS", "SOW". It is the wrong
+face for "Drag a slot onto another, or click one and then the slot to move it
+to", which is three lines of running text. `--t-body`/`--t-body-sm` are
+annotated "Pixelify Sans, prose and lists" **and nothing in the game used
+them.** Applied to `.pack__hint`, `.trade__hint`, `.shop__empty`,
+`.trade__empty`, `.shipping__hint` and `.hud__coach`.
+
+Two more in the goal board: `.goalrow__bar` asked for `height: 10px` without
+`box-sizing`, and the trough's 3px ink border left **4px of channel**, so every
+goal showed its progress as a hairline. And `--board-w: 236px` broke the reward
+line inside its own phrase — "PAYS 2 x LEEK / SEEDS" — so 264px now holds the
+longest string the seed list can produce.
+
+The creator's actions moved into the preview's column: the left side was a 208px
+square of grass above ~390px of empty panel, because the card's height is set by
+six swatch rows and the preview is pinned square (U3-6 tried stretching it and
+reverted — a column of grass is a wall). "Start farming" sits under the farmer
+it commits now, and the card lost 62px of height.
+
+### U4-6 — two things the probe could not see · **done**
+
+Both found by **playing** the game after the probe went green, which is the
+argument for doing both.
+
+**The toasts landed on the coach hint.** The probe does not track the toast
+container, because it is empty — and therefore zero-height — unless a message is
+live. Walking into an untilled plot produced "That plot is not cleared yet."
+printed across the top edge of "Walk with WASD…": two pieces of instructional
+text arguing over the same pixels, which is the complaint `.dialogue` already
+carries a note about. `6rem` cleared the hotbar and not the hint; deriving from
+`--hotbar-clear` alone still landed 6px in, because the hint's height is not a
+constant — it is one line at 1440 and three at 390. `--bottom-chrome` is the
+measured reach of both, and the coach is skipped when hidden so the toasts move
+back down once it retires.
+
+**Every error toast in the game was unreadable.** `.toast--error` asks for
+`#fbf1e2` on `background: var(--barn)` — a fine pair that has not reached the
+screen since Phase U gave `.toast` the panel frame with `border-image-slice: 6
+fill`. `fill` paints the source's middle over the element's own background, so
+the background was never painted and cream text sat on the panel's tan interior
+at **1.25:1**. Not "low contrast": invisible, on every refusal the game gives —
+not enough gold, inventory full, plot not cleared.
+
+This is the third time this exact failure has been recorded here and the first
+time it has been about a `fill`: the text did not change, the surface under it
+did, and nothing was looking at the surface (T-27.01 found it three times;
+`.hud__thirsty` carries the note). `contrast.test.ts` checks the pair against
+**the surface the frame actually paints**, not the one the rule believes it set,
+and fails any `background` declared under a `fill` frame.
+
+## How this phase was verified
+
+A Playwright probe opens **every panel at once** — which is a reachable state,
+since panels stay independently openable by design — and asserts zero overlap
+between any panel and the chrome (`rail`, `status`, `hotbar`), plus no element
+out of horizontal bounds, at 1440x900, 1280x720 and 390x844. It reported 10
+failures before and **ALL CLEAN** after. `pnpm test` 2,836 green, `pnpm
+typecheck` clean.
+
+**And then the game was played**, which found two more (U4-6). A geometry probe
+can only measure the elements that are on screen when it looks; a toast is on
+screen for two seconds after an action it does not know how to take.
+
+`railButtons.test.ts` gained two guards: the lane must derive from
+`--chrome-top`, and **no rule in `hud.css` may anchor to a literal `top: <n>px`
+at 24px or above**. That threshold is what keeps it honest rather than merely
+strict — `.hotbar__key` pins its badge at `top: 1px` inside a slot, which is a
+position within a component, not a claim on the viewport.
+
+## One thing this phase looked for and did not find
+
+**The white rectangle under the idle panel is not real.** A large white block
+paints below `.idle__panel` in **headless** Chromium and does not reproduce
+headed. Given `hud.css` already documents a genuine compositing bug of exactly
+this shape — `.pack__head` as `position: sticky` painting a 700x32 black band
+over the WebGL canvas — it looked like a second one. It is a headless GPU
+artifact. **Screenshot compositing questions in a headed browser**; the headless
+run will invent them.
+
+## What is deliberately still not done
+
+- **D-12, and it is now the biggest visual problem on the screen.** At 1440x900
+  roughly 40% of the viewport is flat blue around the fitted map. This pass was
+  scoped to the chrome and left the camera alone.
+- `ui-plaque.png` is still uncalled. It was cut for "the gold counter and the
+  level pip", and the level is a number inside its meter's row now rather than a
+  pip, so half the reason is gone. Gold keeps the honey pill.
+- The idle panel still does not say **what idle mode is doing** — Phase U2's
+  note stands, and the status cluster is the obvious place for it now that the
+  cluster is a grid with room.
+
+## Phase U5 — the text pass
+
+The brief was "the idle text isn't in a good colour", plus dialogue and general
+game text. The idle complaint turned out to be the visible corner of one
+systematic bug. Client only; no wording changed, only treatment.
+
+### U5-1 — the ground a `fill` frame paints · **done**
+
+**`border-image-slice: <n> fill` paints the source image's middle OVER the
+element's own background.** So from Phase U onward — which put a nine-sliced
+frame on almost every control in the HUD — a rule of the shape
+
+```css
+background: var(--barn);
+color: var(--paper);
+```
+
+stopped describing anything real. The background is not painted; the colour is
+sitting on whatever the PNG has in its middle. Nothing in the stylesheet reads
+as wrong, which is why it survived.
+
+Six controls had text that was **effectively invisible**, every ground sampled
+from the shipped asset rather than read off the rule:
+
+| rule | declared | real ground | ratio |
+|---|---|---|---|
+| `.idle__banner` | `--paper-raised` | `ui-panel.png` #f7dbc6 | **1.13** |
+| `.goalrow__tag` | `--paper` | `ui-tag-grey.png` #d9d9d9 | **1.07** |
+| `.goalrow__claim` | `--paper` | `ui-plate-moss.png` #a4c93c | **1.45** |
+| `.idle__stop:hover` | `--paper` on `--barn` | `ui-plate-pink.png` #ffaab0 | **1.37** |
+| `.trade__btn--danger` | `--barn` on `transparent` | `ui-plate-rust.png` #ae4924 | **1.15** |
+| `.decorrow__btn:disabled` | `--faint` on `--paper-raised` | rust plate #ae4924 | **1.15** |
+
+**`.idle__banner` is the reported bug**, and it is the worst place for it: the
+banner shows the entire time idle mode runs — §5.3's headline feature — and is
+the only control that stops it. `ui.css` frames `.toast, .idle__banner` in one
+rule; **the toast was fixed for exactly this last phase and the banner beside it
+was not.** One selector was fixed; the class was never swept.
+
+Two of the six were *regressions in `hud.css`*: `ui.css` already pairs
+`.goalrow__tag` and `.goalrow__claim` with `--ink` and has been right all along.
+`hud.css` loads second and was overriding it with the colour that belongs on the
+dark plank.
+
+Four more were sub-AA rather than invisible — `--paper` on the rust plate is
+**4.21**. The palette has been carrying a fix for that which cannot reach it:
+T-27.01 darkened `--barn` by 4.5% specifically to get the button label to 4.52,
+and `contrast.test.ts` still pinned that pair. `--barn` is a *background*, and it
+has not been painted since Phase U. **The token was doing nothing and the test
+was confirming it.** The art cannot be darkened — it is the licensed pack — so
+the label moves up to `--paper-raised`, 4.76.
+
+### U5-2 — the guard, landed before the fix · **done**
+
+Written first and confirmed to report **all eleven** cases before anything was
+changed, so the check is proven to catch this class rather than assumed to.
+
+`describe('text on a frame that paints its own middle')` reads each selector's
+**declared** colour out of the stylesheets — `ui.css` then `hud.css`, last
+declaration wins, `var()` resolved — and checks it against the fill colour
+**decoded from the PNG** with the same `decodePng` the asset pipeline uses. A
+table of intended tokens would have passed happily while all six were invisible;
+a pinned hex would be one more copy of a number that can drift from the art.
+
+Two structural guards came with it:
+
+- **No `background` under a `fill` frame.** That combination is always a lie, and
+  every one of the six had it.
+- **No `opacity` on a rule that also sets type.** See U5-3.
+
+A state selector that declares no colour inherits its base — which is the
+correct shape for one, and is what lets four of the six fixes be "delete the
+line".
+
+### U5-3 — six quiet browns, and a comment with the reasoning backwards · **done**
+
+T-27.01 created `--faint` because **three** values were doing this job. It then
+wrote, four lines below the fix:
+
+> The other literal in this file, #6d4738, is left alone: it measures 6.10 and
+> was never the problem.
+
+That is why there were **six** by this phase. A second answer to a settled
+question means every rule written afterwards picks one at random, and the
+literal won **fourteen uses to five**. Three more arrived as `opacity` dimmings
+— #493233, #604641, #654a44 — which are not colours at all.
+
+`.board__tab`'s comment explained the technique:
+
+> Half-strength rather than a lighter colour, so the contrast ratio the
+> `contrast.test.ts` axe pass pins is not quietly reduced.
+
+**It is exactly backwards.** `opacity` reduces the ratio — cream at 62% on the
+plank is 5.63 rather than 12.75 — and the reduction is precisely what a test
+reading `color:` cannot see. The pinned pair stayed green while the painted one
+moved.
+
+**The token is `#6d4738` now**, because the literal was also the better value:
+5.74 on the panel tan against #875146's 4.55. Consolidating onto the weaker
+number to preserve a token's value would have been the wrong way round.
+
+Also fixed: `ui.css`'s `var(--faint, #8d5449)`. `--faint` is declared on `.hud`
+only, so on the `.ui-scope` pages that load `ui.css` without `hud.css` **the
+fallback is what applies** — and #8d5449 is the *previous* `--faint`, at 4.29. A
+stale copy of a token escaping a token update, on the surface nobody checked,
+which is the exact failure `--faint` exists to end.
+
+### U5-4 — prose in the prose face, and an overflow it was hiding · **done**
+
+`.dialogue__text` — the merchant's actual spoken lines — was set in **Silkscreen,
+the uppercase chrome face**. Measured in the real box at 390x844:
+
+| face | rows for a 117-character line |
+|---|---|
+| **Silkscreen 14px (was)** | **4** |
+| **Pixelify Sans 14px** | **3** |
+| Pixelify Sans 16px | 4 |
+
+The box reserves three. **`DIALOGUE_MAX_LINE = 120` was already being violated by
+the stylesheet** — its own note says it was measured against "0.82rem
+monospace", the face changed later, and nobody re-measured. So moving prose to
+the prose face *repairs* the constant rather than threatening it, and no shared
+config changes.
+
+`.idle__hint` and `.creator__hint` were the two rules last phase's prose
+conversion missed, which is why the idle panel was the one panel still wearing
+the old 12px label-face treatment. That is the visible half of the complaint.
+
+`.dialogue__speaker` measured **4.54** on the box's tan — four hundredths above
+AA, in the colour this HUD uses for warnings. A merchant's name is not a
+warning; `--frame` reads as a name and measures 9.78.
+
+### U5-5 — the hotbar digits · **done**
+
+`--paper-raised` on the slot art is **3.54** on a filled cell and **2.38** on the
+selected one. They stayed legible on a four-way ink `text-shadow` — a real
+technique, and one WCAG does not model, so the number failed while the screen
+looked fine. Neither "trust the outline" nor "darken the art" was available.
+
+The digit brings its own ground instead: a chip in `--timber`, the plank the
+hotbar is already made of, so no new colour enters the palette. **14.43:1**, and
+the outline goes with it.
+
+One consequence worth recording: the quantity span is created for every cell and
+*emptied* rather than removed, which cost nothing until it had a background and
+then painted a dark stub in every empty slot. `:empty` in the stylesheet, not a
+change to the render path — the render path was already right; this stylesheet
+gave a blank element something to draw.
+
+## How this phase was verified
+
+A painted-pixel audit screenshots every visible text element and computes its
+ratio against **the colour actually painted behind it**, not the one its rule
+declares. Zero below AA, across 32 elements with every panel open.
+
+**Two artifacts in the audit tool had to be fixed before its output meant
+anything**, and both flattered or accused wrongly:
+
+- It measured boxes *before* the screenshot, so a panel rendering in between put
+  the wrong pixels at an element's coordinates.
+- It measured **occluded** elements. The audit opens every panel at once, which
+  stacks them in one lane, so an element can be laid out correctly and have
+  somebody else's pixels on top of it. That reported the shop's active tab at
+  1.13 against the header behind the panel covering it; measured directly it is
+  ink on orange at **6.9**. It skips anything `elementFromPoint` says is covered.
+
+`pnpm test` 2,854 green, `pnpm typecheck` clean. The dialogue re-measured at
+390x844: a 120-character line is three rows again.
+
+## What is deliberately still not done
+
+- **The `background`-under-`fill` guard only catches rules that declare both.**
+  `.trade__btn--primary` and `.decorrow__btn--place` set
+  `background: var(--grass-deep)` in one rule and inherit the plate from
+  another, so **neither confirm button is green on screen** and no test says so.
+  Catching that needs a cascade model, not a regex.
+- **D-12.** Still the biggest visual problem on the screen, still untouched.
+- The idle panel still does not say **what idle mode is doing** — Phase U2's note
+  stands.
+
+## Phase U6 — buttons that were not where they belonged
+
+A placement pass on the panel headers. Client only, layout only — no colours, no
+wording, no new controls. One of the findings is a trap rather than a blemish.
+
+### U6-1 — the exit could be pushed off the screen · **done**
+
+Panel headers were a single unwrapped flex row — `[title] [tabs] [close]` — with
+no shrink, wrap or scroll strategy. A flex item's default `min-width: auto`
+refuses to shrink below its content, so the tab strip would not give way and the
+**last child was pushed out instead**. The last child is the way out.
+
+Measured, opening one panel at a time so nothing was occluded:
+
+| viewport | symptom |
+|---|---|
+| 1440x900, 1280x720 | `.shop__close` spilled **25px** past the panel's right edge |
+| 390x844 | `.shop__close` rendered at **x 541-593 in a 390px viewport**; "Gear" spilled 64px and "Decor" 155px |
+| 390x844 | `.board__close` covered **both** board tabs — 44x25 over "Requests" — making the tab unclickable |
+
+**On a phone that is a trap.** Escape closes every panel and a touch device has
+no Escape — D-24 gave it a stick and an action button, not a keyboard. A player
+who opened the shop on a phone could not close it, and could not reach Gear or
+Decor either. Confirmed in a touch context: the close button's centre was not
+hit-testable because it was not on the screen.
+
+Same failure as BUG-05 — *"at 390px its 842px of content pushed six controls,
+including the only way to log out, off the screen"* — fixed for the top bar and
+never swept into the panels.
+
+### U6-2 — six headers, four ways of reaching the right edge · **done**
+
+Only **two** of six close buttons anchored themselves. `.pack__close` and
+`.shipping__close` carried their own `margin-left: auto`; `.shop__close` was
+pushed by a *sibling's*, `.idle__close` by `flex: 1` on the title,
+`.board__close` by `flex: 1` on the tabs, and `.creator__head` is not a flex
+container at all. Four of six were right-aligned **by the accident of being the
+last flex child** — which holds exactly until the row runs out of width.
+
+They also carried three paddings (0.25/0.3/0.35rem) and three font sizes
+(`--t-title`/`--t-num`/`--t-body`) for one control holding one 32px glyph, so
+the plate art was framed differently on every panel.
+
+One contract now, and it is three lines: the header is a flex row, the **exit**
+is `flex: none` and anchors itself, and the **flexible middle** declares
+`min-width: 0` so it is what gives way. Padding returns to `ui.css`'s shared
+plate rule instead of six overrides.
+
+Tabs `flex-wrap: wrap`. On a phone the shop's strip also takes its own row
+(`flex-basis: 100%`), because wrapping alone put five tabs on **three** ragged
+rows once the title and close had eaten the first row's width; given the full
+366px they need two. The board is excluded from that — it has no title, so its
+two tabs and close share a row comfortably, and forcing a second row there buys
+an empty first row holding nothing but the ✕.
+
+### U6-3 — the countdown floated at a shifting midpoint · **done**
+
+`.trade__expiry` and `.trade__history-toggle` are siblings in `.trade__head` and
+**both** declared `margin-left: auto` — the only place in the file where two
+auto margins shared a flex line. Flexbox splits the free space equally, so the
+countdown sat at an arbitrary midpoint with ~170px of gap on each side and
+**moved as the string got shorter**: measured x 651-694 for "4m 59s", 661-684
+for "59s", and a collapsed 672-672 hole when the trade had no expiry.
+
+**The obvious fix reproduced the bug one element along.** Deleting the expiry's
+auto margin worked until the header contract gave every close button one of its
+own — and History still had its. Two again, splitting again. The expiry gets
+`flex: 1` instead: growing its *box* leaves the text beside the title where it
+belongs, sends History and the close right together, and leaves exactly one auto
+margin on the line. Left edge now fixed at 492 across four string lengths.
+
+### U6-4 — the exit could also scroll away · **done**
+
+`.pack`, `.shipping` and `.idle__panel` are `overflow-y: auto` with a **static**
+header, so scrolling took the close button with it. Measured on the idle panel
+at 1280x560: scrolling to the bottom moved the ✕ from `top: 199` to `top: 113`,
+**46px above the panel's own top edge**.
+
+**This reverses a documented decision, with a re-test.** `.pack__head` carried:
+*"NOT `position: sticky`. It was, and over the WebGL canvas Chromium promoted it
+to its own layer and painted a black band across the compositing bounds — a
+700x32 rectangle above the hotbar, in the game, not just in screenshots."* That
+was a real observation, and the note's second half — "short enough not to need a
+pinned header anyway" — is only true on a tall viewport.
+
+So the artefact was re-tested rather than worked around: sticky headers, headed
+Chromium, both panels scrolled to the bottom over the live canvas. **The band
+does not reproduce.** It was a browser bug this Chromium no longer has. Re-check
+headed if it returns; headless paints its own artefacts over this canvas and
+cannot answer the question.
+
+`.shop` and `.trade` need nothing — they are flex columns whose inner list
+scrolls, so their headers never moved.
+
+### U6-5 — a cascade bug wearing a placement bug's clothes · **done**
+
+The board's header was crammed into 190px on a phone, which is what put its
+close button on top of its tabs. The cause was not in the header: last phase's
+narrow-screen lane block sat **near the top** of `hud.css`, and
+`.board { width: min(var(--board-w), …) }` two thousand lines below simply won
+on source order — a media query adds no specificity. `.hud__decor` had the same
+shape.
+
+The block lives at the end of the file now, after everything it overrides, which
+is where an override block belongs. The board takes the full 366px lane and its
+header fits on one row.
+
+Also in this pass: `.touch__stick` / `.touch__act` moved off `bottom: 6.5rem` —
+the one bottom-anchored pair not reading `--hotbar-clear`, the token that exists
+because `.hud__coach` guessed `4.6rem` and overlapped the hotbar. 6.5rem is
+104px and the token's fallback is also 104px, so they agreed **by coincidence**;
+`hud.ts` republishes the token from a live measurement and the constant would
+not have followed. And `.board__title` is deleted — nothing carried the class,
+while its `flex: 1` made it read as the element doing the pushing.
+
+### U6-6 — the shop is 584px wide, and the number is measured · **done**
+
+With the contract in place the shop's tabs wrapped to two rows even at 1440,
+which is correct and needless. The header needs **540px** of content: title 42 +
+five tabs 400 + 22 of tab gaps + close 56 + two 9.6px header gaps. 520 gave it
+520 — and those twenty pixels were what used to push the close button out.
+
+Two guesses missed before the measurement did not: 560, and a "541 needed"
+computed from widths read out of the stylesheet rather than off the rendered
+header. Narrow screens still wrap deliberately.
+
+## How this phase was verified
+
+Three probes, all run at 1440x900, 1280x720 and 390x844:
+
+- **`btnaudit.mjs`** opens one panel at a time and reports any control that
+  spills outside its panel or overlaps a sibling's text. Six findings before,
+  **zero** after.
+- **`scrolltest.mjs`** scrolls every panel and every scroller inside it to the
+  bottom and asserts the close button is still within the panel's box. **All
+  exits reachable.**
+- **`probe.mjs`** (Phase U4's) still **ALL CLEAN**, since U6-4 and U6-5 move
+  panel boxes.
+
+Plus a touch context at 390x844: the shop's close button is in the viewport and
+hit-testable, and all five tabs are on screen.
+
+**The two new stylesheet guards were proven by reintroducing the bugs.** With
+the close button's anchor deleted, "makes the exit unshrinkable and
+self-anchoring" fails; with the second auto margin restored, "leaves no second
+auto margin in a panel header" fails. Both pass again on the real file. A guard
+that has never been seen to fail is a guard nobody has tested.
+
+`pnpm test` 2,859 green, `pnpm typecheck` clean.
+
+## What is deliberately still not done
+
+- **The auto-margin guard counts by selector, not by container.** A text test
+  cannot know which elements share a flex parent, so it pins the specific
+  siblings that sit in a header with a close button. A sixth header, or a new
+  child, would need adding to that list.
+- **D-12.** Untouched, and still the biggest visual problem on the screen.
+- The `background`-under-`fill` guard from U5 still only catches rules declaring
+  both, so `.trade__btn--primary` and `.decorrow__btn--place` are **still not
+  green on screen**.

@@ -1,10 +1,14 @@
 import Phaser from 'phaser';
 import {
   HOUSE_ANCHOR,
+  HOUSE_CHIMNEY,
   HOUSE_TIER_ART,
   TILE_SIZE,
 } from '@tillhaven/shared/config';
+import { CHIMNEY_OFFSET_Y, CHIMNEY_SMOKE } from '../ambient.js';
 import { groundDepth } from '../depth.js';
+import { prefersReducedMotion } from '../motion.js';
+import { particleTexture } from '../particleTexture.js';
 
 /**
  * The farmhouse.
@@ -81,8 +85,24 @@ function artFor(tier: number) {
   return HOUSE_TIER_ART[tier] ?? HOUSE_TIER_ART[0]!;
 }
 
+/** The chimney mouth in world pixels, or null for a tier that has none. */
+function chimneyAt(tier: number): { x: number; y: number } | null {
+  const mouth = HOUSE_CHIMNEY[tier];
+  if (!mouth) return null;
+
+  // The sprite is bottom-anchored (`setOrigin(0, 1)`), so its top edge is a
+  // whole look-height above the anchor row. The offsets are measured from the
+  // look window's top-left.
+  const { look } = artFor(tier);
+  return {
+    x: HOUSE_POSITION.x + mouth.x,
+    y: HOUSE_POSITION.y - look.height + mouth.y + CHIMNEY_OFFSET_Y,
+  };
+}
+
 export class House {
   private readonly sprite: Phaser.GameObjects.Image;
+  private smoke: Phaser.GameObjects.Particles.ParticleEmitter | null = null;
   private tier: number;
 
   constructor(scene: Phaser.Scene, tier: number) {
@@ -95,6 +115,43 @@ export class House {
       // that stands on the ground here.
       .setOrigin(0, 1)
       .setDepth(groundDepth(HOUSE_POSITION.y));
+
+    this.lightTheFire(scene);
+  }
+
+  /**
+   * Chimney smoke (U3-9, QA audit §G-6 — the last of its visual list).
+   *
+   * **Held to `prefers-reduced-motion`.** An ambient emitter is the purest case
+   * the setting has: it moves continuously without being asked, and nothing is
+   * lost by removing it. Under the setting there is simply no plume, which is
+   * also why this returns rather than emitting once.
+   *
+   * Depth is the house's own row, one above it — the smoke belongs to the
+   * building and must sort with it, so a player walking behind the house is
+   * behind the smoke too. It is deliberately NOT interactive: like
+   * `NightOverlay`, it is scenery, and a particle that swallowed a click would
+   * be a bug nobody would think to look for here.
+   */
+  private lightTheFire(scene: Phaser.Scene): void {
+    if (prefersReducedMotion()) return;
+
+    const mouth = chimneyAt(this.tier);
+    // Tier 2 is a brick house with no stack. Nothing to light.
+    if (!mouth) return;
+
+    this.smoke = scene.add.particles(mouth.x, mouth.y, particleTexture(scene), {
+      tint: [...CHIMNEY_SMOKE.tints],
+      frequency: CHIMNEY_SMOKE.frequencyMs,
+      speed: CHIMNEY_SMOKE.speed,
+      lifespan: CHIMNEY_SMOKE.lifespanMs,
+      gravityY: CHIMNEY_SMOKE.gravityY,
+      angle: CHIMNEY_SMOKE.angle,
+      scale: CHIMNEY_SMOKE.scale,
+      alpha: CHIMNEY_SMOKE.alpha,
+    });
+
+    this.smoke.setDepth(groundDepth(HOUSE_POSITION.y) + 1);
   }
 
   /**
@@ -129,11 +186,25 @@ export class House {
    */
   setTier(tier: number): void {
     if (tier === this.tier) return;
+    const scene = this.sprite.scene;
     this.tier = tier;
     this.sprite.setTexture(artFor(tier).sheet.key, FRAME_NAME);
+
+    /*
+     * The plume follows the roof, and stops entirely where there is no
+     * chimney to follow. Upgrading to tier 2 must put the smoke out rather
+     * than leave it hanging over a roof with no stack under it — and
+     * downgrading (or a poll arriving before the first one did) must be able
+     * to light it again, which is why this rebuilds rather than repositions.
+     */
+    this.smoke?.destroy();
+    this.smoke = null;
+    this.lightTheFire(scene);
   }
 
   destroy(): void {
+    this.smoke?.destroy();
+    this.smoke = null;
     this.sprite.destroy();
   }
 }

@@ -133,6 +133,50 @@
     U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
+/*
+ * Bitter — paragraphs (Phase U3).
+ *
+ * **A third face, because neither of the two above can set a paragraph.** A
+ * pixel face is drawn on a fixed grid and renders crisply only at integer
+ * multiples of it (see the type scale below); body copy on the landing page is
+ * 17px at line-height 1.62 and reflows at every viewport, so it cannot be held
+ * on a grid. Until now the site's answer was `system-ui`, which is the single
+ * largest reason it did not look like the game it advertises.
+ *
+ * **Why a slab.** Pixel faces are all stem and no contrast — every stroke is
+ * the same width because every stroke is the same number of pixels. A
+ * high-contrast display serif fights that; a slab agrees with it, because a
+ * slab's serifs are rectangles and so are pixels. Bitter is low-contrast, was
+ * drawn for screens, and holds up at 17px where a display face would not.
+ *
+ * Variable weight 400-700, so headings cost no extra request. Declared here
+ * rather than in `base.css` so that every `@font-face` in the product is in one
+ * file, which is what `public/fonts/README.md` tells the next person to edit.
+ * The game page loads this stylesheet and never uses Bitter — an unused
+ * `@font-face` is not fetched, so it costs `/play` nothing.
+ */
+@font-face {
+  font-family: 'Bitter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/bitter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Bitter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/bitter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 
 /* ------------------------------------------------------------------ *
  * Tokens
@@ -215,6 +259,104 @@
   --rail-gap: 0.75rem;
   /** Where a left-anchored panel may start. */
   --rail-clear: calc(var(--rail-btn) + var(--rail-gap) * 2);
+
+  /*
+   * Where ANY panel may start, top edge.
+   *
+   * **This replaces nine copies of `top: 72px`**, which was the height of the
+   * full-width top bar Phase U2 deleted. Nine rules kept quoting a bar that no
+   * longer exists, and nothing failed, because a stale constant is still a
+   * number. It is the same offset the rail and the cluster already sit at, so
+   * a panel now lines up with the chrome rather than with a memory of it.
+   */
+  --panel-top: 0.75rem;
+
+  /*
+   * The vertical counterpart to `--rail-clear`: how far down the top-anchored
+   * chrome reaches. **Measured and published by `hud.ts`, never declared.**
+   *
+   * `--rail-clear` was added in Phase U2 because two left-anchored panels sat
+   * underneath the rail and swallowed its clicks. **The vertical half of that
+   * fix was never built**, and the status cluster is anchored top-right — so
+   * `.idle__panel`, the one right-anchored panel in the game, covered the level
+   * bar and the energy bar at every viewport measured (268x85 at 1440x900,
+   * 268x76 at 1280x720, 294x81 at 390x844). Both are `z-index: auto` siblings,
+   * so which one won was decided by DOM order, and `.idle` is declared last.
+   *
+   * **It is a measurement and not a sum of constants**, and the phone is why.
+   * The first attempt computed the lane as `cluster + one rail button`, which
+   * is right until the rail wraps: at 390px eight buttons need two rows, the
+   * rail became 94px instead of 44, and every panel landed on its second row.
+   * Constants describing a flex layout are a promise the layout has not made.
+   *
+   * `hud.ts` measures the cluster — which it already does for the camera, in
+   * `barHeight()` (T-18.03) — and, when the rail is laid out as a ROW rather
+   * than a column, the rail too. CSS decides the direction; the measurement
+   * reads it back. One number, both orientations, no assumption.
+   *
+   * The value below is only the pre-mount fallback: the cluster's bottom edge
+   * measures 157px at 1440x900 with the default type scale.
+   */
+  --chrome-top: 157px;
+
+  /*
+   * The status cluster's bottom edge on its own, also published by `hud.ts`.
+   *
+   * Two tokens rather than one because the narrow-screen rail is positioned
+   * under the cluster and `--chrome-top` includes the rail — a rail that read
+   * `--chrome-top` would be positioning itself from its own height. This is the
+   * half of the measurement that has no such cycle.
+   */
+  --status-bottom: 157px;
+
+  /*
+   * **Where every panel starts. One lane, every width, no exceptions.**
+   *
+   * The alternative was to let centred panels stay high, since at 1440 a 520px
+   * panel centred at x460-980 misses a cluster that starts at x1156. That is
+   * true and it is not worth having: it is true only above some width nobody
+   * has written down, and at 390px the same panel spans the whole screen and
+   * lands squarely on the cluster. A rule that holds at one viewport is the
+   * thing this whole fix is replacing.
+   *
+   * So the lane is below the chrome always. It costs ~100px of panel height on
+   * a 900px screen and buys the invariant that **no panel can ever cover the
+   * player's own gold, level or energy** — which is the one readout a player
+   * needs *while* a panel is open, to know whether they can afford the thing
+   * they are looking at.
+   */
+  --panel-lane-top: calc(var(--chrome-top) + var(--panel-top));
+
+  /*
+   * The hotbar's footprint, bottom-anchored: viewport bottom edge to the
+   * strip's top edge, gap included. **Published by `hud.ts` from `chrome()`**,
+   * which has measured exactly this for the camera since T-18.03.
+   *
+   * A token because `.hud__coach` guessed `4.6rem` and overlapped the hotbar at
+   * every viewport — 30px at 1440x900, 6px at 1280x720, 30px at 390x844,
+   * straight across the slot numbers.
+   *
+   * **The obvious fix was wrong and is worth recording.** `.dialogue` derives
+   * this arithmetically — `0.75rem + var(--slot-size) + 14px + 0.75rem` — and
+   * copying that formula here looked like reusing a solved problem. It computes
+   * to 92px and the strip actually occupies 104: the `14px` is padding plus a
+   * 6px border, and the plank's `border-image` is 5px at `--ui-scale: 3`, so
+   * the real border is 30px. The formula had been quietly 12px short for as
+   * long as it has existed, and nothing caught it because `.dialogue` had
+   * enough slack to absorb it and a panel's `max-height` does not.
+   *
+   * So this is measured rather than derived, like every other number in this
+   * block. The value below is the pre-mount fallback only.
+   */
+  --hotbar-clear: 104px;
+
+  /*
+   * How far up the bottom chrome reaches once the coach hint is counted, not
+   * just the hotbar. Published by `hud.ts` alongside `--hotbar-clear`; see the
+   * note on `publishBottomChrome`. The toasts are the only consumer, because
+   * they are the only thing that has to clear BOTH.
+   */
+  --bottom-chrome: 174px;
 }
 
 
@@ -255,6 +397,13 @@
 }
 
 /*
+ * **Two frames in this pack measure sliceable and are not frames.** The other
+ * is `Inventory/Book.png`: its middle band contains the spine, a centred
+ * one-pixel feature, and `border-image` has no mode that keeps a centred
+ * feature centred — `stretch` smears it across the panel and `repeat` tiles it
+ * into several. `docs/ui-measurements.md` carries the full note. `.pack` draws
+ * the book in CSS from colours sampled off that file instead.
+ *
  * **There is no `.ui-well` primitive, and the absence is deliberate.**
  *
  * `ui-well.png` is cut and shipped, and it looks like exactly what an inset
@@ -339,7 +488,9 @@
   padding: 0 calc(2px * var(--ui-scale-plate));
   min-height: calc(16px * var(--ui-scale-plate));
   background: none;
-  color: var(--paper, #f7dbc6);
+  /* See the note on the applied plate rule below: the ground is the art's
+     #ae4924, where #f7dbc6 measures 4.21 and #fdeade measures 4.76. */
+  color: var(--paper-raised, #fdeade);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 400;
@@ -351,6 +502,12 @@
   align-items: center;
   justify-content: center;
   gap: 0.5em;
+}
+
+/* The same lift the HUD's own buttons get, so the primitive is not the
+   poorer relation of the rules that re-implement it. */
+.ui-plate:hover:not(:disabled) {
+  filter: brightness(1.12);
 }
 
 .ui-plate:active:not(:disabled),
@@ -493,11 +650,29 @@
  * tall), and the thin progress bars at y134-137 and y150-153 (4px).
  * ------------------------------------------------------------------ */
 
+/*
+ * **The track is 42 source pixels wide, and this rule used to let the element
+ * decide (U3-5).**
+ *
+ * `ui-bars.png` is a GRID of bars, not one bar: a column scan of the band this
+ * rule points at finds four tracks per row — x3-44, x54-80, x99-140, x147-188.
+ * The window this rule opens is the element's own width, so any consumer wider
+ * than `42px * --ui-scale` silently reveals the next bar along, and at 192 it
+ * shows all four with their end caps interleaved. The comment here said "192
+ * source px wide", which is the width of the SHEET.
+ *
+ * Nothing had ever hit it, because `.ui-bar` had no callers until the boot
+ * curtain — it was written in Phase U and the HUD's own bars are hand-built in
+ * `hud.css`. The width is declared here now so the first real consumer is not
+ * also the first bug report. Override it with a whole multiple of 42 if a
+ * longer bar is ever wanted; anything else stretches the caps out of square.
+ */
 .ui-bar {
   position: relative;
+  width: calc(42px * var(--ui-scale));
   height: calc(9px * var(--ui-scale));
   background-image: url('/assets/ui-bars.png');
-  /* 192 source px wide, scaled as one piece so the end caps stay square. */
+  /* The sheet, scaled as one piece so the end caps stay square. */
   background-size: calc(192px * var(--ui-scale)) calc(160px * var(--ui-scale));
   background-position: calc(-3px * var(--ui-scale)) calc(-101px * var(--ui-scale));
   background-repeat: no-repeat;
@@ -505,11 +680,25 @@
   overflow: hidden;
 }
 
+/*
+ * **The band at y116 is NOT "the filled variant" — corrected in U3-5.**
+ *
+ * A pixel scan of both bands finds the same full bar drawn twice in different
+ * colours: green (#6ebd3c core, #8a3625 frame) at y103-107 and cyan (#2eafc7,
+ * same frame) at y119-123. `ui-bars.png` is a colour catalogue, not an
+ * empty/filled pair, and the pack ships no empty track at all. Layering the two
+ * therefore gives a cyan bar creeping over a green one rather than a bar
+ * filling up.
+ *
+ * Left pointing at y116 because a two-colour bar is a legitimate thing to want
+ * and this primitive still has no callers in the HUD. **What it is not is a
+ * progress bar.** For that, draw the channel and clip one of these as the fill
+ * — `play.html`'s boot curtain does exactly that and is the worked example.
+ */
 .ui-bar__fill {
   height: 100%;
   background-image: url('/assets/ui-bars.png');
   background-size: calc(192px * var(--ui-scale)) calc(160px * var(--ui-scale));
-  /* The filled variant of the same track, one band lower. */
   background-position: calc(-3px * var(--ui-scale)) calc(-116px * var(--ui-scale));
   background-repeat: no-repeat;
   image-rendering: pixelated;
@@ -645,7 +834,11 @@
 .idle__panel,
 .board,
 .creator__card,
-.hud__decor {
+.hud__decor,
+/* U3-4: the auth card is a window too, and joins the rule rather than
+   copying it. This is the first selector here that is not in the HUD, which
+   is what `.ui-scope` was declared for. */
+.auth__card {
   /*
    * 2x, not the 3x the HUD defaults to. At 3x the frame is 30px of timber on
    * every side of a 520px panel, which is a picture frame with a shop in it.
@@ -732,6 +925,9 @@
 .shipping__head,
 .board__head,
 .idle__head,
+/* U3-6: the creator was the last panel wearing a flat `--ink` rectangle for a
+   header, inside a card that already had the timber ring around it. */
+.creator__head,
 .hud__status {
   border-style: solid;
   border-width: calc(10px * var(--ui-scale-head, 1)) calc(8px * var(--ui-scale-head, 1))
@@ -823,8 +1019,6 @@
  * tracks. The previous energy bar was a three-stop CSS gradient in colours
  * belonging to nothing, which is the actual thing that looked wrong.
  */
-.hud__xpbar,
-.hud__energybar,
 .goalrow__bar {
   border: calc(1px * var(--ui-scale)) solid var(--ink);
   border-radius: 0;
@@ -867,6 +1061,37 @@
 }
 
 /*
+ * **An empty cell recedes.**
+ *
+ * The pack's cell is `--soil` (#c46120), a fully saturated orange, and every
+ * slot wore it whether or not it held anything. A new player's hotbar is four
+ * items and eight empties, so the strip along the bottom of the screen read as
+ * twelve equally loud orange squares — the single largest block of colour in
+ * the game, most of it saying nothing. The backpack panel was worse: twelve
+ * across by however many rows, nearly all empty.
+ *
+ * Desaturated and darkened rather than faded with `opacity`. A transparent cell
+ * over the farm shows grass through the slot and reads as a hole; this keeps
+ * the cell solid and just stops it competing. The filled cells are then the
+ * bright ones, which is the correct ordering and was the inverted one before.
+ *
+ * NOT applied to the hotbar's selected slot even when it is empty: the
+ * highlight has to stay findable at a glance, and an empty hand is still a
+ * choice the player made.
+ */
+.slot.is-empty,
+.hotbar__slot.is-empty:not(.is-selected) {
+  filter: saturate(0.5) brightness(0.78);
+}
+
+/* Dropping into an empty cell is the point of empty cells, so the drag states
+   have to outrank the resting one. */
+.slot.is-empty.is-over,
+.slot.is-empty:hover {
+  filter: none;
+}
+
+/*
  * The selected hotbar slot gets the pack's bracket frame, overlaid.
  *
  * This is what `ui-select.png` is for: a transparent middle, so the brackets
@@ -891,7 +1116,22 @@
   image-rendering: pixelated;
 }
 
-/* Bar buttons, and every close/confirm/claim button in every panel. */
+/*
+ * Bar buttons, and every close/confirm/claim button in every panel.
+ *
+ * **This rule re-implements `.ui-plate` rather than composing it, and that has
+ * a consequence nobody had hit until U3-6.** It pins `--plate-src` itself, so
+ * adding `.ui-plate--sand` to one of these elements does nothing: both are one
+ * class of specificity and this section is later in the file. Every colour in
+ * the eleven-family plate vocabulary is therefore unreachable from here, which
+ * is a large part of why Phase U's own notes say the button vocabulary is
+ * "barely touched".
+ *
+ * `.creator__btn` was removed from the list in U3-6 and now carries
+ * `class="ui-plate ui-plate--moss"` in its markup instead — which is the shape
+ * the rest of these should eventually take. Doing that conversion wholesale is
+ * a bigger change than the creator needed.
+ */
 .hud__btn,
 .shop__close,
 .pack__close,
@@ -903,7 +1143,6 @@
 .shiprow__btn,
 .decorrow__btn,
 .trade__btn,
-.creator__btn,
 .goalrow__claim,
 .idle__stop,
 .touch__act {
@@ -922,7 +1161,24 @@
   padding: 0 calc(3px * var(--ui-scale-plate));
   min-height: calc(16px * var(--ui-scale-plate));
   background: none;
-  color: var(--paper);
+  /*
+   * **`--paper-raised`, not `--paper`, and the reason is that the plate is ART.**
+   *
+   * `--paper` on this plate measures **4.21** — below AA — and the palette has
+   * been carrying a fix for that which does not reach it. T-27.01 darkened
+   * `--barn` by 4.5% specifically to get the button label to 4.52, and
+   * `contrast.test.ts` still pins that pair. But `--barn` is a BACKGROUND, and
+   * since Phase U this rule paints `ui-plate-rust.png` over it with
+   * `border-image-slice: ... fill`. The ground is the art's own #ae4924, the
+   * darkened token is painted over before it is seen, and the test was
+   * confirming a pair that is not on screen.
+   *
+   * The art cannot be darkened — it is the licensed pack. So the label moves up
+   * instead: #fdeade is the same cream one step lighter, already in the palette
+   * as the book's inner panel, and reaches **4.76**. Same idea as T-27.01's
+   * nudge, applied to the half of the pair that is ours to change.
+   */
+  color: var(--paper-raised);
   font-family: var(--pixel-label);
   font-size: var(--t-label);
   font-weight: 400;
@@ -944,7 +1200,6 @@
 .shiprow__btn:active:not(:disabled),
 .decorrow__btn:active:not(:disabled),
 .trade__btn:active:not(:disabled),
-.creator__btn:active:not(:disabled),
 .goalrow__claim:active:not(:disabled),
 .idle__stop:active,
 .touch__act:active {
@@ -958,7 +1213,6 @@
 .shoprow__btn:hover:not(:disabled),
 .shiprow__btn:hover:not(:disabled),
 .trade__btn:hover:not(:disabled),
-.creator__btn:hover:not(:disabled),
 .goalrow__claim:hover:not(:disabled) {
   filter: brightness(1.12);
 }
@@ -969,13 +1223,24 @@
  * that reads as "yes" without competing with the rust the HUD is built from.
  */
 .shoprow__btn,
-.goalrow__claim,
-.creator__btn {
+.goalrow__claim {
   --plate-src: url('/assets/ui-plate-moss.png');
   --plate-src-down: url('/assets/ui-plate-moss-down.png');
 
   color: var(--ink);
 }
+
+/*
+ * **`.creator__btn` used to be in that list, and it made both of the creator's
+ * buttons green (U3-6).** "Start farming" is a confirm and "Surprise me" is
+ * not — it rerolls, and a player who reads green as "yes" will hit it looking
+ * for the way out. The two carry their own `.ui-plate--moss` and
+ * `.ui-plate--sand` now.
+ *
+ * Worth knowing generally: a blanket `--plate-src` here beats any
+ * `.ui-plate--x` modifier, because both are one class of specificity and this
+ * section comes later in the file. Reach for a modifier first.
+ */
 
 /*
  * VIP stays visually apart, and §7 is why: it is the one control that spends
@@ -1109,9 +1374,16 @@ a.hud__btn {
   color: var(--ink);
 }
 
-/* Gold, level and goal tags: the pill set. */
+/*
+ * Gold and goal tags: the pill set.
+ *
+ * `.hud__level` used to be here too, on `ui-tag-cyan.png` — and the energy fill
+ * directly beneath it is the pack's cyan. The one thing the meters' own comment
+ * said must not happen, two readouts you have to look twice at to tell apart,
+ * was happening through the pip rather than through the bar. The level is a
+ * number in its meter's own row now, told apart by a star glyph.
+ */
 .hud__gold,
-.hud__level,
 .goalrow__tag {
   --ui-scale-tag: 1;
 
@@ -1124,10 +1396,6 @@ a.hud__btn {
   image-rendering: pixelated;
   border-radius: 0;
   color: var(--ink);
-}
-
-.hud__level {
-  border-image-source: url('/assets/ui-tag-cyan.png');
 }
 
 .goalrow__tag {
@@ -1168,5 +1436,15 @@ a.hud__btn {
 .ui-tooltip__meta {
   display: block;
   margin-top: 0.25em;
-  color: var(--faint, #8d5449);
+  /*
+   * **The fallback matters here, and it was the PREVIOUS `--faint`.**
+   *
+   * `--faint` is declared on `.hud` only, and this tooltip is also used by the
+   * `.ui-scope` pages that load this stylesheet without `hud.css` — so on those
+   * pages the fallback is what actually applies, and #8d5449 measures **4.29**
+   * on the dialogue box's tan. A stale copy of a token, escaping a token
+   * update, on the surface where nobody was looking: which is the exact failure
+   * `--faint` was created to end.
+   */
+  color: var(--faint, #6d4738);
 }

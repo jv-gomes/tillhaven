@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { SHEETS, ICON_SHEETS, IMAGES, TILEMAPS, TILE_SIZE } from '@tillhaven/shared/config';
+import { SHEETS, ICON_SHEETS, IMAGES, TILEMAPS } from '@tillhaven/shared/config';
 import { hud } from '../hud.js';
+import { boot } from '../boot.js';
 
 /**
  * Loads every asset in the shared manifest and reports progress.
@@ -11,8 +12,6 @@ import { hud } from '../hud.js';
  * not as an invisible sprite three phases later.
  */
 export class Preload extends Phaser.Scene {
-  private bar!: Phaser.GameObjects.Rectangle;
-  private label!: Phaser.GameObjects.Text;
   private readonly failures: string[] = [];
 
   constructor() {
@@ -20,8 +19,6 @@ export class Preload extends Phaser.Scene {
   }
 
   preload(): void {
-    this.buildProgressUi();
-
     for (const sheet of [...SHEETS, ...ICON_SHEETS]) {
       this.load.spritesheet(sheet.key, sheet.path, {
         frameWidth: sheet.frameWidth,
@@ -40,8 +37,7 @@ export class Preload extends Phaser.Scene {
     }
 
     this.load.on(Phaser.Loader.Events.PROGRESS, (value: number) => {
-      this.bar.width = Math.round(value * 320);
-      this.label.setText(`Loading  ${Math.round(value * 100)}%`);
+      boot.progress(value);
     });
 
     this.load.on(Phaser.Loader.Events.FILE_LOAD_ERROR, (file: Phaser.Loader.File) => {
@@ -51,14 +47,20 @@ export class Preload extends Phaser.Scene {
   }
 
   create(): void {
+    /*
+     * The failure path keeps the curtain up. A missing asset used to overwrite
+     * a Phaser label on a blue screen; now it leaves the boot screen standing
+     * with the key named on it and a way back to the landing page, because a
+     * player who cannot load the game needs somewhere to go more than they need
+     * a diagnostic.
+     */
     if (this.failures.length > 0) {
-      this.label.setText(`Missing: ${this.failures.join(', ')}`).setColor('#ae4924');
+      boot.fail(`Missing: ${this.failures.join(', ')}`);
       return;
     }
 
     this.verifyFrameCounts();
     this.verifyTilemaps();
-    this.label.setText(`Loaded  ${SHEETS.length + ICON_SHEETS.length + IMAGES.length + TILEMAPS.length} assets`);
 
     hud.mount();
     /*
@@ -70,6 +72,8 @@ export class Preload extends Phaser.Scene {
     hud.announceVipReturn(window.location.search, (path) =>
       window.history.replaceState(null, '', path),
     );
+
+    boot.done(SHEETS.length + ICON_SHEETS.length + IMAGES.length + TILEMAPS.length);
     this.scene.start('Farm');
   }
 
@@ -120,32 +124,5 @@ export class Preload extends Phaser.Scene {
         }
       }
     }
-  }
-
-  private buildProgressUi(): void {
-    const { width, height } = this.scale;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    this.add.text(cx, cy - 48, 'TILLHAVEN', {
-      fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-      fontSize: '20px',
-      color: '#f2e3ce',
-    })
-      .setOrigin(0.5)
-      .setLetterSpacing(8);
-
-    this.add.rectangle(cx, cy, 320, TILE_SIZE, 0x123040).setOrigin(0.5);
-    this.bar = this.add
-      .rectangle(cx - 160, cy, 0, TILE_SIZE, 0x79bf56)
-      .setOrigin(0, 0.5);
-
-    this.label = this.add
-      .text(cx, cy + 36, 'Loading  0%', {
-        fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-        fontSize: '12px',
-        color: '#b59d84',
-      })
-      .setOrigin(0.5);
   }
 }
