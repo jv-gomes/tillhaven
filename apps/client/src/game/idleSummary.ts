@@ -74,6 +74,15 @@ export function idleSummaryMessage(summary: IdleSummaryView | null): string | nu
   // The one line here that is a nudge rather than news, so it is always said —
   // including when a full bag is the only reason there is nothing else to say.
   const full = summary.bagWasFull ? 'Your bag filled up, so a ripe crop is still standing.' : null;
+  /*
+   * Said only alongside actual work, which is why it is not in `parts`. A
+   * farmer that did nothing has nothing to explain, and "you slept twice" on
+   * its own would read as the news rather than the footnote it is.
+   */
+  const naps =
+    worked && summary.slept > 0
+      ? `Your farmer slept ${summary.slept === 1 ? 'once' : `${summary.slept} times`} to keep going.`
+      : null;
 
-  return [worked, full].filter(Boolean).join(' ');
+  return [worked, naps, full].filter(Boolean).join(' ');
 }

@@ -24,6 +24,7 @@ function summary(over: Partial<IdleSummaryView> = {}): IdleSummaryView {
     harvested: {},
     window: { from: T0 - 2 * MINUTE, to: T0 },
     bagWasFull: false,
+    slept: 0,
     ...over,
   };
 }

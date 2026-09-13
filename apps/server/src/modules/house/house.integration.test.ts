@@ -12,6 +12,7 @@ import {
   INTERIOR_ROOM,
   STARTING_FURNITURE,
   getFurniture,
+  isBedFurniture,
 } from '@tillhaven/shared';
 import { SPAWN_CELL } from './reachability.js';
 import { db, schema, closeDb } from '../../db/client.js';
@@ -121,6 +122,106 @@ describe('GET /api/house', () => {
       STARTING_FURNITURE.map((p) => p.furnitureId).sort(),
     );
     await fresh.close();
+  });
+
+  /* ---------------------------------------------------------------- *
+   * The bed every house has
+   * ---------------------------------------------------------------- */
+
+  /**
+   * **A bedless account is a dead account**, and this is the repair.
+   *
+   * Sleeping is the only way to recover energy and energy gates every action,
+   * so a player without a bed can work once and then stop forever — unless they
+   * can find 1,400g they have no way left to earn. Every account registered
+   * before `STARTING_FURNITURE` existed is in exactly that state, which is what
+   * this read heals.
+   *
+   * Simulated by stripping the account bare, which is precisely the shape those
+   * accounts are in: no placement, nothing in storage.
+   */
+  describe('the bed every house has', () => {
+    async function stripBeds(): Promise<void> {
+      await db
+        .delete(schema.furniturePlacements)
+        .where(eq(schema.furniturePlacements.playerId, playerId));
+      await db
+        .delete(schema.furnitureOwned)
+        .where(eq(schema.furnitureOwned.playerId, playerId));
+    }
+
+    it('grants and places one for an account that has none', async () => {
+      await stripBeds();
+
+      const res = await client.get('/api/house');
+
+      expect(res.status).toBe(200);
+      const beds = (res.body.placements as { furnitureId: string }[]).filter((p) =>
+        isBedFurniture(p.furnitureId),
+      );
+      expect(beds).toHaveLength(1);
+      // Placed, not banked — a bed in storage needs the decoration tray to get
+      // out of, which is not a thing a repair should ask of anyone.
+      expect(res.body.owned).toEqual([]);
+    });
+
+    it('puts it where a new account would find it', async () => {
+      await stripBeds();
+
+      const placed = (await client.get('/api/house')).body.placements as {
+        furnitureId: string;
+        x: number;
+        y: number;
+      }[];
+      const starter = STARTING_FURNITURE.find((p) => isBedFurniture(p.furnitureId))!;
+
+      expect(placed[0]).toMatchObject({ furnitureId: starter.furnitureId, x: starter.x, y: starter.y });
+    });
+
+    /** Idempotent: reading the house twice must not furnish it with two beds. */
+    it('grants exactly one, however many times the house is read', async () => {
+      await stripBeds();
+
+      await client.get('/api/house');
+      await client.get('/api/house');
+      const res = await client.get('/api/house');
+
+      expect(res.body.placements).toHaveLength(1);
+    });
+
+    /** A bed in STORAGE counts. The player has one; it is theirs to put down. */
+    it('leaves an account that owns one in storage alone', async () => {
+      await db
+        .delete(schema.furniturePlacements)
+        .where(eq(schema.furniturePlacements.playerId, playerId));
+
+      const res = await client.get('/api/house');
+
+      expect(res.body.placements).toEqual([]);
+    });
+
+    /**
+     * The usual corner being occupied must not mean no bed — it means another
+     * corner. The fallback exists because a repaired account can have bought
+     * and placed anything anywhere in the years before this check existed.
+     */
+    it('finds another spot when the usual corner is taken', async () => {
+      await stripBeds();
+      const starter = STARTING_FURNITURE.find((p) => isBedFurniture(p.furnitureId))!;
+      await db.insert(schema.furniturePlacements).values({
+        playerId,
+        furnitureId: 'fireplace',
+        x: starter.x,
+        y: starter.y,
+        placedAt: Date.now(),
+      });
+
+      const placed = (await client.get('/api/house')).body.placements as {
+        furnitureId: string;
+      }[];
+
+      expect(placed.filter((p) => isBedFurniture(p.furnitureId))).toHaveLength(1);
+    });
   });
 
   it('never shows another player’s house', async () => {

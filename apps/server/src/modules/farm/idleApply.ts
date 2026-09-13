@@ -5,7 +5,9 @@ import {
   IdleTask,
   WOOD_PER_TREE,
   benefitsFor,
+  energyCapForLevel,
   isCropId,
+  levelForXp,
   xpForHarvest,
   type CropId,
 } from '@tillhaven/shared';
@@ -25,7 +27,7 @@ import {
 } from '../inventory/service.js';
 import { grantXp } from './level.js';
 import { parseIdleTasks } from './idle.js';
-import { energyOf } from './energy.js';
+import { energyOf, wake } from './energy.js';
 import {
   simulate,
   type SimPlot,
@@ -68,11 +70,14 @@ export interface IdleSummary {
   readonly stoppedReason: SimStop;
   /** Energy the offline farmer used, already charged to the player. */
   readonly energySpent: number;
+  /** Times the offline farmer had to go to bed, already credited. */
+  readonly slept: number;
 }
 
 const NOTHING: IdleSummary = {
   actions: 0,
   energySpent: 0,
+  slept: 0,
   chopped: 0,
   tilled: 0,
   planted: 0,
@@ -171,9 +176,16 @@ export async function catchUpIdle(
  */
 export async function applyIdleWork(
   tx: Tx,
-  player: AuthedPlayer,
+  authed: AuthedPlayer,
   now: number,
 ): Promise<IdleSummary> {
+  /*
+   * Rebound rather than used directly: settling a manual sleep below replaces
+   * the energy columns, and everything downstream — the simulator's budget, the
+   * charge at the end — must read that one frame rather than the stale snapshot
+   * the request was authenticated with.
+   */
+  let player = authed;
   // 1. The farm row, locked. Re-read rather than trusted from the caller's
   //    earlier look: between that read and this lock another request may have
   //    already done this work, and its watermark is the one that counts.
@@ -194,6 +206,35 @@ export async function applyIdleWork(
   if (!farm || !idleWorkPending(farm, now)) return NOTHING;
 
   const from = farm.idleProcessedAt!;
+
+  /*
+   * 1b. **A manual sleep is settled before the shift, and the player gets up.**
+   *
+   * The simulator now runs its own naps (`SimInput.energyMax`), and it is handed
+   * a bar read through `energyOf`, which already accounts for a sleep in
+   * progress. Leaving `sleeping_since` set afterwards would mean that same rest
+   * counted once here and again on the next read — the recovery is derived from
+   * the timestamp, so it keeps being re-derived until the timestamp is cleared.
+   * Banking it is what puts every number below in one frame, and it is the
+   * existing `wake()` doing it rather than a second copy of the arithmetic.
+   *
+   * **Only a farm with idle mode ON ever reaches this line** (`idleWorkPending`
+   * checks it), so this cannot wake a player who is simply having a lie-down.
+   * For one that has handed the farm over, being woken to work is the feature:
+   * the farmer keeps its own hours now, and a manual sleep underneath an
+   * autonomous one is two schedules fighting over one bar.
+   */
+  if (player.sleepingSince !== null) {
+    const woke = await wake(tx, player, now);
+    player = {
+      ...player,
+      energySpent: Math.max(0, woke.energy.max - woke.energy.current),
+      sleepingSince: null,
+    };
+  }
+
+  const level = levelForXp(player.experience);
+  const energyMax = energyCapForLevel(level);
 
   // 2. Plots, locked, in the same order the farm view uses — which is what
   //    makes the simulator's plot-order tie-break mean something stable.
@@ -245,15 +286,30 @@ export async function applyIdleWork(
     to: now,
     durationPercent: benefits.durationPercent,
     /*
-     * The farmer works on the player's own energy (MVP re-scope), settled for
-     * any sleep in progress. `energyOf` reads the same row every manual action
-     * charges against, so idle work and hand work draw on one bar rather than
-     * two.
+     * The farmer works on the player's own energy (MVP re-scope). `energyOf`
+     * reads the same row every manual action charges against, so idle work and
+     * hand work draw on one bar rather than two.
      */
     energy: energyOf(player, now).current,
+    /*
+     * …and puts itself to bed when that bar runs out, rather than downing tools
+     * until a player walks indoors and presses a key. See `SimInput.energyMax`
+     * for why a throttle beats a wall here.
+     */
+    energyMax,
   });
 
-  const summary = await writeResult(tx, player, farm.id, plotRows, treeRows, result, from, now);
+  const summary = await writeResult(
+    tx,
+    player,
+    farm.id,
+    plotRows,
+    treeRows,
+    result,
+    from,
+    now,
+    energyMax,
+  );
   return summary;
 }
 
@@ -306,6 +362,7 @@ async function writeResult(
   result: SimResult,
   from: number,
   now: number,
+  energyMax: number,
 ): Promise<IdleSummary> {
   const counts = { tilled: 0, planted: 0, watered: 0, harvested: 0, chopped: 0 };
   const gained: Record<string, number> = {};
@@ -428,17 +485,27 @@ async function writeResult(
     .where(eq(schema.farms.id, farmId));
 
   /*
-   * Charge what the farmer actually used.
+   * Charge what the farmer used, and credit what its naps gave back.
    *
-   * Unconditional `+=` rather than the conditional update `spendEnergy` uses:
-   * this runs inside the idle applier's own transaction, which already holds
-   * the farm row, and the simulator was handed a budget read in the same
-   * transaction. There is no second reader to race with.
+   * **A relative `+ delta`, not an absolute value**, even though the applier
+   * knows exactly what the bar should read. The absolute form would clobber a
+   * manual action that committed from another tab between this transaction's
+   * read and its write — `spendEnergy`'s conditional `WHERE` protects itself
+   * against us, and this is the other half of that bargain. A delta composes
+   * with whatever else landed.
+   *
+   * **Clamped in SQL for the same reason.** `energy_spent` is meaningful only
+   * within `[0, cap]`, and the two ends are reachable once naps credit: a shift
+   * whose naps outweigh its work would otherwise leave the column negative and
+   * `energyStateAt` would read that as a full bar plus change.
    */
-  if (result.energySpent > 0) {
+  const energyDelta = result.energySpent - result.energyRecovered;
+  if (energyDelta !== 0) {
     await tx
       .update(schema.players)
-      .set({ energySpent: sql`${schema.players.energySpent} + ${result.energySpent}` })
+      .set({
+        energySpent: sql`greatest(0, least(${energyMax}, ${schema.players.energySpent} + ${energyDelta}))`,
+      })
       .where(eq(schema.players.id, player.id));
   }
 
@@ -452,6 +519,7 @@ async function writeResult(
     to: result.processedTo,
     stoppedReason: result.stoppedReason,
     energySpent: result.energySpent,
+    slept: result.sleeps,
   };
 }
 

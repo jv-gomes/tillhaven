@@ -1,15 +1,18 @@
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import {
+  BED_FURNITURE_IDS,
   ErrorCode,
   GameError,
   INTERIOR_ROOM,
+  STARTING_FURNITURE,
   fitsInRoom,
   getFurniture,
+  isBedFurniture,
   overlaps,
   type FurnitureDef,
 } from '@tillhaven/shared';
 import { checkInteriorReachable, type InteriorPlacement } from './reachability.js';
-import { schema } from '../../db/client.js';
+import { db, schema } from '../../db/client.js';
 import type { Queryable, Tx } from '../../db/tx.js';
 import type { AuthedPlayer } from '../../middleware/auth.js';
 import { isVip } from '../player/view.js';
@@ -86,6 +89,148 @@ export async function interiorView(
     placements: rows,
     owned: owned.filter((o) => o.quantity > 0),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * The bed every house has
+ * ------------------------------------------------------------------ */
+
+/**
+ * The starter bed's home, taken from `STARTING_FURNITURE` rather than written
+ * out — a new account and a repaired one must land in the same room.
+ */
+const STARTER_BED = STARTING_FURNITURE.find((p) => isBedFurniture(p.furnitureId));
+
+/**
+ * Whether this player has a bed anywhere — placed or in storage.
+ *
+ * The cheap half of `ensureBed`, deliberately split out and answered with one
+ * query so the overwhelmingly common case (they do) costs a single index hit
+ * and no transaction. Same shape as `idleWorkPending` guarding `catchUpIdle`.
+ */
+export async function hasBed(q: Queryable, playerId: string): Promise<boolean> {
+  const rows = await q
+    .select({ one: sql<number>`1` })
+    .from(schema.furniturePlacements)
+    .where(
+      and(
+        eq(schema.furniturePlacements.playerId, playerId),
+        inArray(schema.furniturePlacements.furnitureId, [...BED_FURNITURE_IDS]),
+      ),
+    )
+    .limit(1);
+
+  if (rows.length > 0) return true;
+
+  const owned = await q
+    .select({ one: sql<number>`1` })
+    .from(schema.furnitureOwned)
+    .where(
+      and(
+        eq(schema.furnitureOwned.playerId, playerId),
+        inArray(schema.furnitureOwned.furnitureId, [...BED_FURNITURE_IDS]),
+        sql`${schema.furnitureOwned.quantity} > 0`,
+      ),
+    )
+    .limit(1);
+
+  return owned.length > 0;
+}
+
+/**
+ * Gives this player a bed if they have none, and puts it down for them.
+ *
+ * **Sleeping is the only way to recover energy, and energy gates every action
+ * in the game** — so a player without a bed is a player who can work once and
+ * then stop, permanently, unless they can find 1,400g. That is not a difficulty
+ * curve, it is a dead account, and it is exactly what every account registered
+ * before `STARTING_FURNITURE` existed is sitting in today: 103 of them on this
+ * database at the time of writing.
+ *
+ * **A self-healing check rather than a data migration**, and the reason is
+ * geometry. Choosing where the bed goes means asking `fitsInRoom`, `overlaps`
+ * and `checkInteriorReachable` — three functions that live in shared TypeScript
+ * config and encode footprints derived from sprite sizes. Reimplementing that in
+ * a SQL migration would be a second authority on where furniture may stand
+ * (§4.4), and it would go stale the first time a crop window changed. Asking the
+ * real code, on the one read that proves the player is standing in the room,
+ * costs one indexed query per house visit and can never disagree with itself.
+ *
+ * It also covers cases a one-off migration would not: an account restored from a
+ * backup, a bed lost to some future bug, a piece removed from the catalogue.
+ *
+ * **The fallback matters.** If the bed's usual corner is taken, every cell is
+ * tried in turn; if the room is genuinely too full, it goes into storage rather
+ * than nowhere. Storage needs the decoration tray to get out of, which is worse
+ * UX than a placed bed and infinitely better than no bed.
+ */
+export async function ensureBed(tx: Tx, playerId: string, now: number): Promise<void> {
+  if (!STARTER_BED) return;
+
+  // Taken first, before the read the decision rests on — see `lockRoom`. Two
+  // house reads racing must not each conclude "no bed" and grant one.
+  await lockRoom(tx, playerId);
+  if (await hasBed(tx, playerId)) return;
+
+  const def = defOf(STARTER_BED.furnitureId);
+  const existing = await lockPlacements(tx, playerId);
+
+  const spot = firstFreeSpot(def, STARTER_BED, existing);
+
+  if (spot === null) {
+    await addOwned(tx, playerId, def.id, 1);
+    return;
+  }
+
+  await tx
+    .insert(schema.furniturePlacements)
+    .values({ playerId, furnitureId: def.id, x: spot.x, y: spot.y, placedAt: now });
+}
+
+/**
+ * Where the bed can stand: its usual corner, else the first cell that works.
+ *
+ * Scanned in row-major order so the answer is deterministic — a repair that
+ * picked a different corner on each attempt would make the room untestable.
+ * `assertPlaceable` is reused as the predicate rather than its three checks
+ * being re-asked here, so a bed this grants is one the player could have placed
+ * themselves, reachability included.
+ */
+function firstFreeSpot(
+  def: FurnitureDef,
+  preferred: { readonly x: number; readonly y: number },
+  existing: readonly { furnitureId: string; x: number; y: number }[],
+): { x: number; y: number } | null {
+  const candidates = [
+    preferred,
+    ...Array.from({ length: INTERIOR_ROOM.height }, (_, y) =>
+      Array.from({ length: INTERIOR_ROOM.width }, (_, x) => ({ x, y })),
+    ).flat(),
+  ];
+
+  for (const at of candidates) {
+    try {
+      assertPlaceable(def, at.x, at.y, existing);
+      return at;
+    } catch {
+      // Not here. `assertPlaceable` throws before writing anything, so trying
+      // the next cell costs nothing but the arithmetic.
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The cheap check, then its own transaction — the shape `catchUpIdle` uses.
+ *
+ * Exported for the route to call before `interiorView`, so the view it returns
+ * already contains the bed and the client never renders a bedless room even
+ * once.
+ */
+export async function ensureBedIfMissing(playerId: string, now: number): Promise<void> {
+  if (await hasBed(db, playerId)) return;
+  await db.transaction((tx) => ensureBed(tx, playerId, now));
 }
 
 /* ------------------------------------------------------------------ *

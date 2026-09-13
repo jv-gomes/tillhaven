@@ -273,6 +273,7 @@ function toSummaryView(shift: IdleSummary): IdleSummaryView {
     harvested: shift.gained,
     window: { from: shift.from, to: shift.to },
     bagWasFull: shift.stoppedReason === 'inventory_full',
+    slept: shift.slept,
   };
 }
 

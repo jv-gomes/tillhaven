@@ -54,7 +54,7 @@ continues from v1; D-1 is now decided.)
 | D-2 | Withering (crops rot if unharvested?) | Open. Punishing for an idle game; would need the first scheduled job (§4.2) | `WITHERING_ENABLED = false`; `plots.withered_at` stays reserved |
 | D-3 | Is gold tradeable between players? | Open. Cleanest RMT vector; safe default off | `GOLD_IS_TRADEABLE = false` in `config/economy.ts`; a test pins it |
 | D-4 | Tool tiers | Open, and **scheduled to be answered by T-36.07**, which is the first task that gives tiers a way to be *made* rather than bought. Art has 9 tiers (Wood→Obsidian); only Wood exists. The question is unchanged — what does a better tier do? **The recommendation carried into T-36.07 is area (a 3x3 watering can) plus an `IDLE_ACTION_MS` reduction, and explicitly NOT speed**: the swing animation is the client's only action cooldown and the thing covering request latency, so shortening it makes the game feel worse rather than better. Must be recorded as decided before it is built | Only `*_wood` tool items exist until decided; T-36.07 |
-| D-5 | Energy/stamina | **DECIDED (MVP re-scope, 2026-09-08): YES**, live since R-5. The Phase 30 recommendation below was to close it as "no"; it is kept because the reasoning is what sized the bar — a new farm can work every starting plot exactly once, and recovery is ten real minutes, not a real day, so the bar ends a session rather than a day. Idle mode spends it too. *The superseded recommendation:* The gameplay overhaul's whole premise is that active play should be where depth lives, and a stamina bar is a mechanic for *stopping* people playing — in a game whose §1 pillar is short frequent sessions, it punishes the exact behaviour the overhaul is trying to encourage. Fishing (Phase 34) and mining (Phase 36) make this sharper, not softer | `packages/shared/src/config/energy.ts`; `players.energy_spent` / `sleeping_since` |
+| D-5 | Energy/stamina | **DECIDED (MVP re-scope, 2026-09-08): YES**, live since R-5. The Phase 30 recommendation below was to close it as "no"; it is kept because the reasoning is what sized the bar — a new farm can work every starting plot exactly once, and recovery is ten real minutes, not a real day, so the bar ends a session rather than a day. Idle mode spends it too — and **since U7-2 sleeps to refill it rather than stopping**, so for the idle farmer the bar is a ~25% duty cycle, not a wall. *The superseded recommendation:* The gameplay overhaul's whole premise is that active play should be where depth lives, and a stamina bar is a mechanic for *stopping* people playing — in a game whose §1 pillar is short frequent sessions, it punishes the exact behaviour the overhaul is trying to encourage. Fishing (Phase 34) and mining (Phase 36) make this sharper, not softer | `packages/shared/src/config/energy.ts`; `players.energy_spent` / `sleeping_since` |
 | D-29 | Does the game bundle a typeface? | **DECIDED (Phase U): YES** — **three since Phase U3**, all SIL OFL 1.1, self-hosted. `hud.css` had refused one on the grounds that it "would mean a second licence in ATTRIBUTION.md for a decision nobody has taken yet"; the decision was taken. Pixelify Sans for body, Silkscreen for uppercase labels, and **Bitter for paragraphs** — U3 put the faces on the marketing pages too, and neither pixel face can set body copy: both are drawn on fixed grids (10px and 8px) and only stay crisp at integer multiples, while a landing-page paragraph reflows at every viewport. A slab was chosen because a slab's serifs are rectangles and so are pixels. Self-hosted rather than linked: a Google Fonts `<link>` hands every player IP to a third party and puts a render-blocking request in front of the game | `apps/client/public/fonts/` (+ `README.md`, both `OFL.txt`); `@font-face` in `styles/ui.css`; `config/credits.ts` |
 | D-30 | Where does nine-slice geometry live? | **DECIDED (Phase U): in `scripts/lib/ui-crops.mjs`, and nowhere else.** Not in `assets.ts` — every UI frame is consumed by CSS, never by Phaser's loader, so adding them to `IMAGES` would burn Tiled `firstgid`s for assets Phaser never draws. Three checks keep the one copy honest: `measure-ui.mjs --check` re-derives every inset from the pixels, `prepare-assets.mjs` decodes each crop it writes, and `uiSlices.test.ts` compares the stylesheet to the table | `scripts/lib/ui-crops.mjs`; `docs/ui-measurements.md` |
 | D-6 | Chest placement | Open. MVP has one fixed chest on the map. Placeable/multiple chests later? | Single chest object in `farm.json` |
@@ -16991,3 +16991,146 @@ that has never been seen to fail is a guard nobody has tested.
 - The `background`-under-`fill` guard from U5 still only catches rules declaring
   both, so `.trade__btn--primary` and `.decorrow__btn--place` are **still not
   green on screen**.
+
+## Phase U7 — the bed nobody had, and a farmer who never woke up
+
+Two halves of the same complaint: **energy is the only limit in the game, sleep
+is the only way to get it back, and the bed was a 1,400g shop item.** So the
+loop had a hole at both ends — a player could be permanently unable to act, and
+an idle farm could permanently stop.
+
+### U7-1 — a bed in every house, not a bed in the shop · **done**
+
+`STARTING_FURNITURE` has placed a bed since T-18.25, so every account
+registered *after* that walks into a furnished room. Every account registered
+**before** it has nothing:
+
+| accounts | beds (placed or in storage) |
+|---|---|
+| 134 | ≥ 1 |
+| **103** | **0** |
+
+Those 103 can work until the bar empties and then never again, unless they can
+find 1,400g — which they cannot, because earning gold takes energy. Not a
+difficulty curve; a dead account.
+
+**Fixed as a self-healing check on `GET /api/house`, not as a data migration**,
+and the reason is geometry. Choosing where a bed goes means asking
+`fitsInRoom`, `overlaps` and `checkInteriorReachable` — three functions that
+live in shared TypeScript and encode footprints derived from sprite sizes.
+Reimplementing that in SQL would be a second authority on where furniture may
+stand (§4.4) and would go stale the first time a crop window moved. Asking the
+real code, on the one read that proves the player is standing in the room,
+costs a single indexed query for everybody who already has a bed — which is
+every account that will ever be registered from now on.
+
+It also covers what a one-off migration would not: a restored backup, a bed
+lost to some future bug, a catalogue change.
+
+`ensureBed` takes `lockRoom` **first** (T-18.28's phantom-read fix) so two
+concurrent house reads cannot each conclude "no bed" and grant one. It prefers
+the starter corner, falls back to a row-major scan using `assertPlaceable` as
+the predicate — so a granted bed is one the player could have placed
+themselves, reachability included — and only if the room is genuinely full does
+it go to storage.
+
+**Both beds stay in the catalogue.** The free one is the plain bed; the
+four-poster is still something to want.
+
+### U7-2 — the idle farmer puts itself to bed · **done**
+
+The simulator stopped at `out_of_energy` and stayed stopped. At 2 energy an
+action against a 40-point bar that is **twenty actions — about three minutes** —
+after which the farm stood still until a player walked indoors and pressed a
+key. The original note defending that wall argued energy the offline farmer
+ignored would be no limit at all. Right about the danger, wrong about the
+remedy: an idle game whose headline feature needs manual intervention every
+three minutes is not idle (§1).
+
+**Energy is now a throttle, not a wall.** The farmer spends the bar, sleeps
+`SLEEP_DURATION_MS`, and resumes.
+
+It gives up nothing, because **sleep has no cooldown and never did**: a present
+player has always been able to alternate work and bed exactly like this, so
+auto-sleep gives the absent player the same deal and no better one. And in
+practice it is *harsher* than the wall, which was routinely followed by a
+player sleeping on demand and resetting it for free. The duty cycle:
+
+| | |
+|---|---|
+| bar at level 1 | 40 |
+| average action | ~2 energy → ~20 actions |
+| work per bar | 20 x `IDLE_ACTION_MS` = **~3.3 min** |
+| rest | `SLEEP_DURATION_MS` = **10 min** |
+| **farmer is busy** | **~25% of the time** |
+
+Verified against the running server — a 3-day absence on a 20-plot farm,
+starting with the bar at zero:
+
+```
+watered: 360   slept: 18   (18 naps x 40 energy = 720 = 360 x 2, exactly)
+```
+
+Before: 0 actions, because the farmer was already flat out.
+
+Three things the implementation turns on:
+
+- **A nap that does not fit in the window is declined, not truncated.**
+  `processedTo` stops at the last action either way, so a truncated nap would
+  be re-simulated and credited twice on the next read. Declining keeps the
+  simulator's one non-negotiable property — a window is worth the same however
+  many times it is run. The rest is deferred, not lost: the next read covers a
+  longer window and the nap fits.
+- **A manual sleep is banked before the shift.** The recovery is derived from
+  `sleeping_since` on every read, so spending it in a shift and leaving the
+  timestamp set would hand the same rest out again on the next poll — a slow,
+  silent energy dupe. `applyIdleWork` calls the existing `wake()` and gets the
+  player up. Only a farm with idle mode **on** ever reaches that line, so it
+  cannot wake someone merely having a lie-down; for one that has handed the
+  farm over, a manual sleep underneath an autonomous one is two schedules
+  fighting over one bar.
+- **The energy write stayed relative** (`+ delta`, clamped in SQL to
+  `[0, cap]`) even though the applier knows the absolute answer. The absolute
+  form would clobber a manual action committing from another tab —
+  `spendEnergy`'s conditional `WHERE` protects itself against the applier, and
+  this is the other half of that bargain.
+
+Termination is guarded rather than assumed: a bar too small to pay for the
+cheapest available action refills to a bar that still cannot, so that case
+keeps the old wall. `slot` also strictly advances across every nap.
+
+`IDLE_MAX_CATCHUP_ACTIONS` goes back to being live code — energy had made it
+unreachable, and it is what bounds a long absence again.
+
+**The summary says so.** `IdleSummaryView.slept` rides the existing
+while-you-were-away toast: *"Your farmer slept 18 times to keep going."* News,
+not a nudge — but without it a player who left for a day and came back to four
+hours of work has no way to tell a tired farmer from a broken one.
+
+### Verification
+
+`pnpm typecheck` clean. Server 1,100 green, client 884, shared 705.
+
+The reversed test is worth naming: `idleApply.integration.test.ts`'s *"stops
+when the farmer runs out of energy"* asserted the old wall, including the line
+*"a tired farmer stays tired until the player sleeps"*. It now asserts the
+opposite, and the part of it that was always the point — that a long absence is
+not settled in full — survives as `action_cap` rather than `out_of_energy`.
+
+The nap's real-time **cost** is pinned in `idleSim.test.ts`, not the
+integration suite: a real farm runs out of things to do long before it runs out
+of energy (soil stays wet four hours), so a short window stops at
+`nothing_to_do` and proves nothing about sleep.
+
+### What is deliberately still not done
+
+- **No browser pass.** Chrome is not installed in this environment and
+  `npx playwright install chrome` needs sudo. Both changes were verified end to
+  end against the running dev server through the real HTTP endpoints instead.
+- **The energy frame is still "now", not "window start".** The simulator is
+  handed the bar as of `now` for a window that began in the past. Pre-existing,
+  untouched, and conservative in the common case — but it is the next thing to
+  look at if the numbers ever seem generous.
+- **A bed that lands in storage** (only possible in a genuinely full room)
+  needs the decoration tray to get out of. The scan makes it near-impossible;
+  it is a fallback, not a path.

@@ -269,6 +269,15 @@ export interface IdleSummaryView {
    * something to a person.
    */
   readonly bagWasFull: boolean;
+  /**
+   * How many times the idle farmer had to go to bed during the window.
+   *
+   * News rather than a nudge — there is nothing to do about it — but news worth
+   * telling, because it is the only visible sign that energy is what paced the
+   * absence. Without it a player who left for a day and came back to four hours
+   * of work has no way to tell a tired farmer from a broken one.
+   */
+  readonly slept: number;
 }
 
 export interface Farm {

@@ -8,6 +8,7 @@ import {
   CROPS,
   HOUR,
   IDLE_ACTION_MS,
+  ENERGY_BASE,
   ENERGY_COST,
   EnergyAction,
   MINUTE,
@@ -464,58 +465,137 @@ describe('applyIdleWork directly', () => {
    * where the farmer stopped, so the remainder is picked up next time rather
    * than silently forgiven.
    */
-  it('stops when the farmer runs out of energy, and watermarks short of now', async () => {
-    /*
-     * Watering, not sowing: seeds run out and this needs work that does not.
-     * Every plot holds a crop with an absurd snapshotted duration, so it never
-     * ripens and keeps needing a drink every wet window.
-     */
+  /**
+   * A farm of crops that never ripen and always want a drink.
+   *
+   * Watering, not sowing: seeds run out and these tests need work that does
+   * not. Every plot holds a crop with an absurd snapshotted duration, so it
+   * never ripens and keeps needing a drink every wet window — an inexhaustible
+   * supply of 2-energy actions, which is what makes the energy arithmetic below
+   * a straight division rather than a guess.
+   */
+  async function endlessWatering(msAgo: number): Promise<void> {
     await db
       .update(schema.plots)
       .set({
         unlocked: true,
         cropId: LEEK,
-        plantedAt: Date.now() - 90 * 24 * HOUR,
+        plantedAt: Date.now() - msAgo,
         growthDurationMs: 365 * 24 * HOUR,
         grownMs: 0,
         wateredAt: null,
-        tilledAt: Date.now() - 90 * 24 * HOUR,
+        tilledAt: Date.now() - msAgo,
       })
       .where(eq(schema.plots.farmId, farmId));
 
-    await idleSince(90 * 24 * HOUR, ['water'], LEEK);
+    await idleSince(msAgo, ['water'], LEEK);
+  }
+
+  async function energySpentRow(): Promise<number> {
+    const [row] = await db
+      .select({ energySpent: schema.players.energySpent })
+      .from(schema.players)
+      .where(eq(schema.players.id, playerId));
+    return row!.energySpent;
+  }
+
+  /**
+   * **The farmer sleeps rather than stopping**, which reverses what this test
+   * asserted before auto-sleep landed.
+   *
+   * The old contract was that a tired farmer stayed tired until the player
+   * walked indoors and pressed a key — and at 2 energy an action against a
+   * 40-point bar, that meant a farm that worked for twenty actions and then
+   * stood still for a day. The headline idle feature needing manual
+   * intervention every three minutes is not idle (§1), so the bar became a
+   * throttle: work, sleep `SLEEP_DURATION_MS`, work again.
+   *
+   * What survives from the old test is the part that was always the point —
+   * that a long absence is not settled in full. It is `action_cap` doing that
+   * now rather than `out_of_energy`, which is the cap going back to being live
+   * code after energy had made it unreachable.
+   */
+  it('sleeps when the farmer runs out of energy, and carries on working', async () => {
+    await endlessWatering(90 * 24 * HOUR);
 
     const player = await currentPlayerRow(playerId);
     const now = Date.now();
     const summary = await db.transaction((tx) => applyIdleWork(tx, player, now));
 
-    expect(summary.stoppedReason).toBe('out_of_energy');
     expect(summary.actions).toBeGreaterThan(0);
+    expect(summary.slept).toBeGreaterThan(0);
+    // Far more work than one bar could ever have paid for, which is the whole
+    // claim: 40 energy buys 20 waterings and it did many times that.
+    expect(summary.actions).toBeGreaterThan(20);
+
+    // A 90-day window is not settled in full — the watermark stops where the
+    // farmer did, and the remainder is picked up next read rather than forgiven.
     expect(summary.to).toBeLessThan(now);
     expect((await farmRow()).idleProcessedAt).toBe(summary.to);
 
-    // Every action it took was paid for, and the bar is now empty.
-    expect(summary.energySpent).toBe(
-      summary.actions * ENERGY_COST[EnergyAction.WATER],
-    );
-    const spent = await db
-      .select({ energySpent: schema.players.energySpent })
-      .from(schema.players)
-      .where(eq(schema.players.id, playerId));
-    expect(spent[0]!.energySpent).toBe(summary.energySpent);
+    // Every action was paid for at the real price.
+    expect(summary.energySpent).toBe(summary.actions * ENERGY_COST[EnergyAction.WATER]);
 
     /*
-     * **And the next read does NOT carry on**, which is the honest
-     * consequence of the design choice that idle work spends energy: a tired
-     * farmer stays tired until the player sleeps. Before energy this asserted
-     * the opposite — that the remainder resumed immediately — and that is no
-     * longer true of this game.
+     * The bar reflects work MINUS naps, and it is within bounds. Both ends
+     * matter: a negative `energy_spent` would read as a bar bigger than the cap,
+     * and one above the cap as a permanently exhausted farmer.
      */
-    const tired = await currentPlayerRow(playerId);
-    const second = await db.transaction((tx) => applyIdleWork(tx, tired, now));
+    const spent = await energySpentRow();
+    expect(spent).toBeGreaterThanOrEqual(0);
+    expect(spent).toBeLessThanOrEqual(ENERGY_BASE);
+
+    /*
+     * **And the next read carries on** — the property the pre-energy version of
+     * this test asserted, restored. A farmer that has just slept has a bar to
+     * spend, so the remainder of the absence gets worked through instead of
+     * waiting on a player.
+     */
+    const rested = await currentPlayerRow(playerId);
+    const second = await db.transaction((tx) => applyIdleWork(tx, rested, now));
     expect(second.from).toBe(summary.to);
-    expect(second.actions).toBe(0);
-    expect(second.stoppedReason).toBe('out_of_energy');
+    expect(second.actions).toBeGreaterThan(0);
+  });
+
+  /*
+   * The nap's real-time COST — that energy still paces the farm rather than
+   * merely pausing it — is pinned in `idleSim.test.ts`, where a window can be
+   * filled with an inexhaustible supply of work. It cannot be pinned here: a
+   * real farm runs out of things to do long before it runs out of energy (soil
+   * stays wet for four hours), so a short window stops at `nothing_to_do` and
+   * proves nothing about sleep.
+   */
+
+  /**
+   * **A manual sleep is settled, not stacked on top of a simulated one.**
+   *
+   * The rest is derived from `sleeping_since` on every read, so leaving the
+   * timestamp set after a shift that already spent the recovered energy would
+   * hand the same rest out again on the next poll — a slow, silent energy dupe.
+   * The applier banks it and gets the player up; the column is absolute
+   * afterwards and the flag is clear.
+   */
+  it('banks a manual sleep before the shift instead of counting it twice', async () => {
+    await endlessWatering(30 * MINUTE);
+
+    // Flat out, and in bed for a full night as of the start of the window.
+    await db
+      .update(schema.players)
+      .set({ energySpent: ENERGY_BASE, sleepingSince: Date.now() - 30 * MINUTE })
+      .where(eq(schema.players.id, playerId));
+
+    const player = await currentPlayerRow(playerId);
+    const summary = await db.transaction((tx) => applyIdleWork(tx, player, Date.now()));
+
+    const [after] = await db
+      .select({ energySpent: schema.players.energySpent, sleepingSince: schema.players.sleepingSince })
+      .from(schema.players)
+      .where(eq(schema.players.id, playerId));
+
+    expect(summary.actions).toBeGreaterThan(0);
+    expect(after!.sleepingSince).toBeNull();
+    expect(after!.energySpent).toBeGreaterThanOrEqual(0);
+    expect(after!.energySpent).toBeLessThanOrEqual(ENERGY_BASE);
   });
 
   it('reports nothing, and writes nothing, when idle is off', async () => {

@@ -13,6 +13,7 @@ import {
   type CropId,
   EnergyAction,
   energyCostOf,
+  SLEEP_DURATION_MS,
 } from '@tillhaven/shared';
 import { growthAt, plantedCrop, settleGrowth } from './growth.js';
 import {
@@ -130,20 +131,43 @@ export interface SimInput {
   readonly actionMs?: number;
   readonly maxActions?: number;
   /**
-   * Energy available to the farmer for this window (MVP re-scope).
+   * Energy available to the farmer at the START of this window (MVP re-scope).
    *
-   * **The simulator stops when it runs out**, and that is a deliberate choice
-   * rather than an oversight of the idle-first pillar. Energy that the offline
-   * farmer ignored would be no limit at all: turn idle mode on and the bar
-   * stops mattering forever. The consequence is real and worth stating — a
-   * player who leaves for a day comes back to a farm that stopped a few hours
-   * in, and has to sleep before it resumes.
-   *
-   * Optional, and `undefined` means UNLIMITED. Every existing test predates
-   * energy and describes what the simulator does with the farm rather than
-   * with the farmer, so they keep asserting exactly that.
+   * Optional, and `undefined` means UNLIMITED. Every test that predates energy
+   * describes what the simulator does with the farm rather than with the
+   * farmer, so they keep asserting exactly that.
    */
   readonly energy?: number;
+  /**
+   * The player's full energy bar — what a night's sleep restores, and the
+   * switch that turns **auto-sleep** on.
+   *
+   * **The idle farmer puts itself to bed.** The first version of this simulator
+   * simply stopped at `out_of_energy`, on the argument that energy the offline
+   * farmer ignored would be no limit at all. That argument was right about the
+   * danger and wrong about the remedy: what it actually produced was a farm
+   * that worked for three minutes and then stood still for a day, waiting for a
+   * player to walk indoors and press a key. An idle game whose headline feature
+   * needs manual intervention every three minutes is not idle (§1).
+   *
+   * Sleeping instead makes energy a **throttle rather than a wall**. The farmer
+   * spends the bar, lies down for `SLEEP_DURATION_MS`, and resumes — so the
+   * limit shows up as a duty cycle, not a stall. At one action per
+   * `IDLE_ACTION_MS` and roughly 2 energy an action, a 40-point bar is about
+   * three minutes of work against a ten-minute rest: the farmer is busy about a
+   * quarter of the time. That is a far *harsher* real limit than the wall ever
+   * was in practice, because the wall was routinely followed by a player
+   * sleeping on demand and resetting it for free.
+   *
+   * It also loses nothing the manual game has: sleep has no cooldown, so a
+   * present player has always been able to alternate work and bed exactly like
+   * this. Auto-sleep gives the absent player the same deal and no better one.
+   *
+   * `undefined` — or a bar too small to pay for the cheapest action — keeps the
+   * old behaviour and stops at `out_of_energy`. The latter is not a nicety: it
+   * is what guarantees this loop terminates.
+   */
+  readonly energyMax?: number;
 }
 
 export interface SimAction {
@@ -202,6 +226,17 @@ export interface SimResult {
   readonly stoppedReason: SimStop;
   /** Energy the simulated actions consumed, for the applier to charge. */
   readonly energySpent: number;
+  /**
+   * Energy the simulated NAPS gave back, for the applier to credit.
+   *
+   * Reported alongside `energySpent` rather than netted off it because the two
+   * are different facts and the summary says both: "your farmer worked" and
+   * "your farmer had to rest twice to do it". The applier charges the
+   * difference.
+   */
+  readonly energyRecovered: number;
+  /** How many times the farmer went to bed during the window. */
+  readonly sleeps: number;
 }
 
 /**
@@ -560,6 +595,8 @@ export function simulate(input: SimInput): SimResult {
       processedTo: input.from,
       stoppedReason: 'nothing_to_do',
       energySpent: 0,
+      energyRecovered: 0,
+      sleeps: 0,
     };
   }
 
@@ -582,6 +619,17 @@ export function simulate(input: SimInput): SimResult {
    */
   let energyLeft = input.energy;
   let energySpent = 0;
+  let energyRecovered = 0;
+  let sleeps = 0;
+  /*
+   * Auto-sleep is on only when a bar was supplied AND it is big enough to pay
+   * for something. A zero or negative cap would refill to a bar that still
+   * cannot afford the next action, and the farmer would lie down forever at the
+   * same slot — so this guard is what makes the loop provably terminate, not a
+   * tidiness check. (`slot` also strictly advances across a nap; both hold.)
+   */
+  const bar = input.energyMax;
+  const canSleep = bar !== undefined && Number.isFinite(bar) && bar > 0;
 
   for (;;) {
     if (actions.length >= maxActions) {
@@ -648,16 +696,61 @@ export function simulate(input: SimInput): SimResult {
      * a random plot on every chop.
      */
     /*
-     * **Charged before the action is applied, and a shortfall ENDS the window
-     * rather than skipping to a cheaper task.** Skipping would let a tired
-     * farmer keep harvesting (1) while never tilling (2) again, which reads as
-     * the farm silently changing its mind about the standing orders. Stopping
-     * is legible: the farm worked until it was tired, and the summary says so.
+     * **Charged before the action is applied, and a shortfall sends the farmer
+     * to BED rather than skipping to a cheaper task.** Skipping would let a
+     * tired farmer keep harvesting (1) while never tilling (2) again, which
+     * reads as the farm silently changing its mind about the standing orders.
+     * Sleeping is legible: the farm worked until it was tired, then rested.
      */
     const cost = energyCostOf(IDLE_ENERGY_ACTION[chosen.kind]);
     if (energyLeft !== undefined && energyLeft < cost) {
-      stoppedReason = 'out_of_energy';
-      break;
+      /*
+       * No bar to refill to, or one too small to pay for this action even
+       * rested: the old wall, unchanged. `bar < cost` is reachable in principle
+       * (nothing in config forbids an action dearer than a level-1 bar) and
+       * sleeping on it would be an infinite loop, so it stops instead.
+       */
+      if (!canSleep || bar! < cost) {
+        stoppedReason = 'out_of_energy';
+        break;
+      }
+
+      /*
+       * **A nap that does not fit inside the window is not taken at all**, and
+       * the window is left unsettled exactly as `action_cap` leaves it.
+       *
+       * Truncating it instead — sleeping until `to` and banking the fraction —
+       * would be the obvious alternative and is wrong here, because `processedTo`
+       * stops at the last action either way: the next read would re-simulate
+       * this same stretch and pay the nap a second time. Declining it keeps the
+       * simulator's one non-negotiable property, that a window is worth the
+       * same however many times it is simulated. The rest is not lost, only
+       * deferred: the next read covers a longer window, the nap fits, and the
+       * farmer takes it then.
+       */
+      const wakesAt = at + SLEEP_DURATION_MS;
+      if (wakesAt > input.to) {
+        stoppedReason = 'out_of_energy';
+        break;
+      }
+
+      energyRecovered += bar! - energyLeft;
+      energyLeft = bar!;
+      sleeps += 1;
+
+      /*
+       * Back on the grid at the first slot after waking — the same
+       * `Math.max(slot + 1, …)` the dry-soil jump uses, and for the same two
+       * reasons: it is what guarantees forward progress, and it keeps the
+       * cadence honest by resuming on the fixed grid rather than on a clock
+       * restarted by the wait.
+       *
+       * `clock` is deliberately NOT advanced. It tracks the last thing actually
+       * DONE, and it is what the watermark falls back to; a nap the window ran
+       * out during must not push the watermark past work that never happened.
+       */
+      slot = Math.max(slot + 1, Math.ceil((wakesAt - input.from) / actionMs));
+      continue;
     }
     if (energyLeft !== undefined) energyLeft -= cost;
     energySpent += cost;
@@ -698,6 +791,10 @@ export function simulate(input: SimInput): SimResult {
      * had they been able to. Settling the whole window would silently forgive
      * the time and hand back a farm that had done nothing for hours with no
      * record of why.
+     *
+     * With auto-sleep it carries a second job. A shift that ends mid-nap stops
+     * here too, and stopping at `clock` is what lets the next read cover a
+     * window long enough for that nap to fit — see the nap branch above.
      */
     processedTo:
       stoppedReason === 'action_cap' || stoppedReason === 'out_of_energy'
@@ -705,6 +802,8 @@ export function simulate(input: SimInput): SimResult {
         : Math.max(input.from, input.to),
     stoppedReason,
     energySpent,
+    energyRecovered,
+    sleeps,
   };
 }
 

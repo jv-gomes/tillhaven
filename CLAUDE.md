@@ -134,6 +134,12 @@ Every state-changing endpoint accepts an idempotency key. Double-submitting `har
   (a pure, deterministic simulator + a watermark `idle_processed_at`),
   applied transactionally on read — so the farm keeps working with the tab
   closed, exactly like §4.2 growth. One action per `IDLE_ACTION_MS`.
+- **Idle work spends energy, and the farmer sleeps when it runs out.** It
+  draws on the player's own bar, and on empty it lies down for
+  `SLEEP_DURATION_MS` and resumes rather than stopping. Energy is therefore a
+  **throttle** on idle work (roughly a 25% duty cycle), never a wall that needs
+  a player to walk indoors and press a key — that would not be idle. The naps
+  are simulated inside the window like everything else; nothing is scheduled.
 - **The client's animation is replay, never authority:** while watching, the
   character walks to the next planned action and plays the tool animation,
   purely cosmetically, reconciling from polls.
@@ -173,6 +179,11 @@ Every state-changing endpoint accepts an idempotency key. Double-submitting `har
   trading stays meaningful (unchanged)
 
 ### 5.7 House & Decoration (deferred)
+- **Every house has a bed, granted free** — placed at registration
+  (`STARTING_FURNITURE`) and repaired on the house read for any account that
+  somehow has none. Sleeping is the only way to recover energy and energy gates
+  every action, so a bed behind a 1,400g paywall is an account that can stop
+  permanently. The four-poster stays a purchase.
 - House renders on the farm; furniture/interior is **hidden for the MVP**
   (server code from v1 stays intact). Re-enablement is a Phase 14 backlog
   item.

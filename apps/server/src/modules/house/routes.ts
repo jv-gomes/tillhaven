@@ -12,6 +12,7 @@ import { runIdempotent } from '../../lib/idempotency.js';
 import { db } from '../../db/client.js';
 import {
   buyFurniture,
+  ensureBedIfMissing,
   interiorView,
   moveFurniture,
   placeFurniture,
@@ -32,6 +33,13 @@ export async function houseRoutes(app: FastifyInstance): Promise<void> {
     { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } },
     async (request) => {
       const player = currentPlayer(request);
+      /*
+       * Before the view, not after: a bedless room rendered even once is a
+       * player who walks up to nothing and cannot recover energy. Short-circuits
+       * on one indexed query for everybody who already has one, which is every
+       * account registered since `STARTING_FURNITURE` landed.
+       */
+      await ensureBedIfMissing(player.id, Date.now());
       return interiorView(db, player);
     },
   );

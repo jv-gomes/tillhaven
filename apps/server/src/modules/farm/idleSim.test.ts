@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   CROPS,
   CROP_IDS,
+  DAY,
+  ENERGY_BASE,
+  ENERGY_COST,
+  EnergyAction,
   HOUR,
+  SLEEP_DURATION_MS,
   IDLE_ACTION_MS,
   IDLE_MAX_CATCHUP_ACTIONS,
   MINUTE,
@@ -1209,5 +1214,128 @@ describe('simulate — chopping', () => {
 
     expect(result.actions).toHaveLength(0);
     expect(result.trees).toEqual([]);
+  });
+});
+
+/**
+ * Energy, and the farmer putting itself to bed (auto-sleep).
+ *
+ * `energy` alone is the old wall: spend it and the shift ends. `energyMax`
+ * turns it into a throttle — the farmer sleeps `SLEEP_DURATION_MS`, refills,
+ * and carries on. The pair is tested together because the interesting
+ * properties are all about the relationship: that sleep is not free, that the
+ * loop still terminates, and that a window simulated twice is worth the same
+ * both times.
+ */
+describe('simulate — energy and auto-sleep', () => {
+  /** An inexhaustible supply of 2-energy work: plots to till, then sow. */
+  function chores(count: number, over: Partial<SimInput> = {}): SimInput {
+    return input({
+      plots: Array.from({ length: count }, (_, i) => plot(`p${i}`)),
+      items: bag({ [SEED]: count }),
+      tasks: ['till', 'plant'],
+      to: T0 + 10 * DAY,
+      ...over,
+    });
+  }
+
+  const TILL_COST = ENERGY_COST[EnergyAction.TILL];
+  /** Actions one full bar pays for, when every action costs the same. */
+  const PER_BAR = ENERGY_BASE / TILL_COST;
+
+  it('stops at the wall when no bar is supplied', () => {
+    const result = simulate(chores(50, { energy: 3 * TILL_COST }));
+
+    expect(result.stoppedReason).toBe('out_of_energy');
+    expect(result.actions).toHaveLength(3);
+    expect(result.sleeps).toBe(0);
+    expect(result.energyRecovered).toBe(0);
+  });
+
+  it('sleeps instead, once a bar is supplied, and keeps working', () => {
+    const result = simulate(chores(50, { energy: 3 * TILL_COST, energyMax: ENERGY_BASE }));
+
+    expect(result.sleeps).toBeGreaterThan(0);
+    expect(result.actions.length).toBeGreaterThan(3);
+    expect(result.energySpent).toBe(result.actions.length * TILL_COST);
+  });
+
+  /**
+   * **The nap costs real time**, which is the entire justification for
+   * auto-sleep being safe to ship. If it did not, energy would stop being a
+   * limit the moment idle mode was switched on — the exact failure the original
+   * `out_of_energy` wall was written to prevent.
+   *
+   * Sized as one bar of work plus one nap plus one bar: the farmer must fit at
+   * most two bars into it, not the ~130 actions the cadence alone would allow.
+   */
+  it('pays SLEEP_DURATION_MS for every nap, so the bar still paces the farm', () => {
+    const window = PER_BAR * IDLE_ACTION_MS + SLEEP_DURATION_MS + PER_BAR * IDLE_ACTION_MS;
+    const result = simulate(
+      chores(200, { energy: ENERGY_BASE, energyMax: ENERGY_BASE, to: T0 + window }),
+    );
+
+    expect(result.sleeps).toBe(1);
+    expect(result.actions.length).toBeGreaterThan(PER_BAR);
+    expect(result.actions.length).toBeLessThanOrEqual(2 * PER_BAR);
+  });
+
+  /**
+   * A nap that runs past the end of the window is DECLINED, not truncated.
+   *
+   * Truncating would double-pay: `processedTo` stops at the last action either
+   * way, so the next read re-simulates this stretch and would credit the same
+   * partial rest again. Declining keeps the simulator's one non-negotiable
+   * property — that a window is worth the same however many times it is run.
+   */
+  it('declines a nap that does not fit in the window', () => {
+    const result = simulate(
+      chores(50, {
+        energy: TILL_COST,
+        energyMax: ENERGY_BASE,
+        // One action, then a nap that cannot possibly complete.
+        to: T0 + 2 * IDLE_ACTION_MS,
+      }),
+    );
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.sleeps).toBe(0);
+    expect(result.energyRecovered).toBe(0);
+    expect(result.stoppedReason).toBe('out_of_energy');
+    // The watermark stops at the action, so the next read covers a window long
+    // enough for the nap to fit — which is how the rest is deferred, not lost.
+    expect(result.processedTo).toBe(T0 + IDLE_ACTION_MS);
+  });
+
+  /**
+   * A bar too small to pay for the cheapest available action would refill to a
+   * bar that still cannot pay for it — a farmer lying down forever at the same
+   * slot. This is the guard that makes the loop provably terminate.
+   */
+  it('does not loop forever on a bar smaller than the action it needs', () => {
+    const result = simulate(chores(50, { energy: 0, energyMax: TILL_COST - 1 }));
+
+    expect(result.stoppedReason).toBe('out_of_energy');
+    expect(result.actions).toHaveLength(0);
+    expect(result.sleeps).toBe(0);
+  });
+
+  /** Determinism survives sleeping — the property the whole feature rests on. */
+  it('is deterministic across naps', () => {
+    const args = chores(100, { energy: 5, energyMax: ENERGY_BASE, to: T0 + DAY });
+
+    expect(simulate(args)).toEqual(simulate(args));
+  });
+
+  it('leaves unlimited-energy callers exactly as they were', () => {
+    // `energyMax` without `energy` is not auto-sleep territory: an unlimited
+    // budget never runs out, so the farmer never has cause to lie down.
+    const result = simulate(chores(4, { energyMax: ENERGY_BASE }));
+
+    expect(result.sleeps).toBe(0);
+    expect(result.actions).toHaveLength(8);
+    // Still COUNTED, just never checked against a budget — so a caller that
+    // later gains one gets an honest bill rather than a blank one.
+    expect(result.energySpent).toBe(8 * TILL_COST);
   });
 });
